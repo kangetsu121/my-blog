@@ -1,0 +1,43 @@
+---
+interface Props {
+  publishedAt: Date;
+  updatedAt?: Date;
+}
+
+const { publishedAt, updatedAt } = Astro.props;
+
+const dateFormatter = new Intl.DateTimeFormat("ja-JP", {
+  dateStyle: "long",
+  timeZone: "Asia/Tokyo",
+});
+
+const hasUpdate = updatedAt && updatedAt.getTime() !== publishedAt.getTime();
+---
+
+<div class="dates">
+  <span>
+    公開日:
+    <time datetime={publishedAt.toISOString()}>
+      {dateFormatter.format(publishedAt)}
+    </time>
+  </span>
+
+  {hasUpdate && (
+      <span>
+        更新日:
+        <time datetime={updatedAt.toISOString()}>
+          {dateFormatter.format(updatedAt)}
+        </time>
+      </span>
+    )}
+</div>
+
+<style>
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  color: #666;
+  font-size: 0.875rem;
+}
+</style>

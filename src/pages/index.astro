@@ -1,0 +1,35 @@
+---
+import ArticleList from "@/components/ArticleList.astro";
+import Pagination from "@/components/Pagination.astro";
+import { ARTICLES_PER_PAGE } from "@/config/site";
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { getArticles } from "@/lib/articles";
+
+const articles = await getArticles();
+const firstPageArticles = articles.slice(0, ARTICLES_PER_PAGE);
+const totalPages = Math.ceil(articles.length / ARTICLES_PER_PAGE);
+const nextPagePath = totalPages > 1 ? "/article/2/" : undefined;
+---
+
+<BaseLayout nextPagePath={nextPagePath}>
+  <main class="article-index">
+    <h1>記事一覧</h1>
+
+    <ArticleList articles={firstPageArticles} />
+
+    <Pagination
+      currentPage={1}
+      totalPages={totalPages}
+      firstPagePath="/"
+      basePath="/article"
+    />
+  </main>
+</BaseLayout>
+
+<style>
+.article-index {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+</style>

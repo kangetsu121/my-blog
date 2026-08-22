@@ -1,0 +1,84 @@
+---
+import { Image } from "astro:assets";
+import type { CollectionEntry } from "astro:content";
+
+import ArticleDates from "@/components/ArticleDates.astro";
+import TagList from "@/components/TagList.astro";
+
+interface Props {
+  article: CollectionEntry<"article">;
+  priority?: boolean;
+}
+
+const { article, priority = false } = Astro.props;
+const href = `/${article.id}/`;
+const thumbnail = article.data.thumbnail;
+---
+
+<article class="card">
+  <h2>
+    <a href={href}>{article.data.title}</a>
+  </h2>
+
+  {thumbnail && (
+    <a href={href} class="thumbnail-link" tabindex="-1">
+      <Image
+        src={thumbnail}
+        alt={article.data.thumbnailAlt ?? ""}
+        width={Math.min(thumbnail.width, 240)}
+        layout="constrained"
+        quality="mid"
+        priority={priority}
+        class="thumbnail"
+      />
+    </a>
+  )}
+
+  <ArticleDates
+    publishedAt={article.data.publishedAt}
+    updatedAt={article.data.updatedAt}
+  />
+
+  <TagList tags={article.data.tags} />
+
+  <p>{article.data.description}</p>
+</article>
+
+<style>
+.card {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 1.25rem;
+  background: var(--color-surface);
+  border: 1px solid rgb(0 0 0 / 12%);
+  border-radius: 1rem;
+  box-shadow: 0 0.25rem 1rem rgb(0 0 0 / 6%);
+}
+
+.card h2 {
+  margin-block: 1rem 0.5rem;
+  font-size: clamp(1.25rem, 4vw, 1.5rem);
+  line-height: 1.4;
+}
+
+.card h2 a {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.card h2 a:hover {
+  text-decoration: underline;
+}
+
+.thumbnail-link {
+  display: block;
+}
+
+.thumbnail {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+</style>

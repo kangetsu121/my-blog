@@ -1,0 +1,104 @@
+---
+import type { GetStaticPaths, InferGetStaticPropsType } from "astro";
+
+import ArticleList from "@/components/ArticleList.astro";
+import Pagination from "@/components/Pagination.astro";
+import TagIcon from "@/components/TagIcon.astro";
+import { ARTICLES_PER_PAGE } from "@/config/site";
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { getArticles } from "@/lib/articles";
+
+export const getStaticPaths = (async ({ paginate }) => {
+  const articles = await getArticles();
+
+  const tags = [...new Set(articles.flatMap((article) => article.data.tags))];
+
+  return tags.flatMap((tag) => {
+    const taggedArticles = articles.filter((article) =>
+      article.data.tags.includes(tag),
+    );
+
+    return paginate(taggedArticles, {
+      pageSize: ARTICLES_PER_PAGE,
+      params: { tag },
+      props: { tag },
+    });
+  });
+}) satisfies GetStaticPaths;
+
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+
+const { tag, page } = Astro.props as Props;
+
+const encodedTag = encodeURIComponent(tag);
+
+const tagBasePath = `/tag/${encodedTag}`;
+
+const previousPagePath =
+  page.currentPage > 1
+    ? page.currentPage === 2
+      ? `${tagBasePath}/`
+      : `${tagBasePath}/${page.currentPage - 1}/`
+    : undefined;
+
+const nextPagePath =
+  page.currentPage < page.lastPage
+    ? `${tagBasePath}/${page.currentPage + 1}/`
+    : undefined;
+
+const title =
+  page.currentPage === 1
+    ? `タグ: ${tag}`
+    : `タグ: ${tag} - ${page.currentPage}ページ目`;
+
+const description = `${tag}タグの記事一覧、${page.currentPage}ページ目`;
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  previousPagePath={previousPagePath}
+  nextPagePath={nextPagePath}
+>
+  <main class="article-index">
+    <h1>
+      <span class="tag-heading-icon">
+        <TagIcon size={24} />
+      </span>
+      <span>「{tag}」の記事</span>
+    </h1>
+
+    <p>
+      {page.total}件中
+      {page.start + 1}〜{page.end + 1}件を表示
+    </p>
+
+    <ArticleList articles={page.data} />
+
+    <Pagination
+      currentPage={page.currentPage}
+      totalPages={page.lastPage}
+      firstPagePath={`/tag/${encodedTag}/`}
+      basePath={`/tag/${encodedTag}`}
+    />
+  </main>
+</BaseLayout>
+
+<style>
+.article-index {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+
+.tag-heading {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.tag-heading-icon {
+  flex: none;
+  color: var(--color-link);
+}
+</style>

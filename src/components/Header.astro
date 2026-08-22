@@ -1,0 +1,107 @@
+---
+import { Image } from "astro:assets";
+
+import logo from "@/assets/logo.png";
+
+const normalizePath = (path: string) => path.replace(/\/+$/, "") || "/";
+const currentPath = normalizePath(Astro.url.pathname);
+
+const isCurrentPage = (href: string) => normalizePath(href) === currentPath;
+---
+
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="/">
+      <Image src={logo} alt="" width={48} densities={[1, 2]} />
+      <span>Kangetsu Blog</span>
+    </a>
+
+    <nav aria-label="メインナビゲーション">
+      <ul>
+        <li>
+          <a href="/" aria-current={isCurrentPage("/") ? "page" : undefined}
+            >Articles</a
+          >
+        </li>
+        <li>
+          <a
+            href="/tag/"
+            aria-current={isCurrentPage("/tag/") ? "page" : undefined}
+            >Tags</a
+          >
+        </li>
+        <li>
+          <a
+            href="/about/"
+            aria-current={isCurrentPage("/about/") ? "page" : undefined}
+          >
+            About
+          </a>
+        </li>
+        <li>
+          <a href="/rss.xml">RSS</a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<style>
+.site-header {
+  background: var(--color-surface);
+  box-shadow: 0 2px 2px rgb(0 0 0 / 15%);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100% - 2rem, var(--content-width));
+  min-height: 4rem;
+  margin-inline: auto;
+}
+
+.brand {
+  display: inline-flex;
+  gap: 0.75rem;
+  align-items: center;
+  color: var(--color-text);
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+nav ul {
+  display: flex;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+nav a {
+  text-decoration: none;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+
+a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 0.15em;
+  text-underline-offset: 0.25em;
+}
+
+@media (width <= 600px) {
+  .inner {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-block: 0.75rem;
+  }
+
+  nav ul {
+    margin-block: 0.5rem 0;
+  }
+}
+</style>

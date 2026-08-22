@@ -1,0 +1,24 @@
+<aside class="note" aria-label="補足">
+  <strong>Note</strong>
+  <div class="body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+.note {
+  padding: 1rem 1.25rem;
+  margin-block: 1.5rem;
+  background: #f5f7fb;
+  border-inline-start: 0.25rem solid var(--color-link);
+  border-radius: 0.25rem;
+}
+
+.body > :global(:first-child) {
+  margin-block-start: 0;
+}
+
+.body > :global(:last-child) {
+  margin-block-end: 0;
+}
+</style>

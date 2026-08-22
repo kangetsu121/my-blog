@@ -1,0 +1,55 @@
+---
+import SocialLinks from "@/components/SocialLinks.astro";
+
+const startYear = 2022;
+const currentYear = new Date().getFullYear();
+
+const yearLabel =
+  currentYear === startYear ? `${startYear}` : `${startYear}–${currentYear}`;
+---
+
+<footer class="site-footer">
+  <SocialLinks />
+
+  <nav aria-label="フッターナビゲーション">
+    <ul>
+      <li>
+        <a href="/documents/disclaimer/">免責事項</a>
+      </li>
+      <li>
+        <a href="/documents/privacy-policy/">プライバシーポリシー</a>
+      </li>
+    </ul>
+  </nav>
+
+  <small>© {yearLabel} Kangetsu Blog</small>
+</footer>
+
+<style>
+.site-footer {
+  padding: 2rem 1rem;
+  margin-block-start: 4rem;
+  color: var(--color-text);
+  text-align: center;
+  background: var(--color-surface);
+  border-block-start: 1px solid rgb(0 0 0 / 10%);
+}
+
+nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: center;
+  padding: 0;
+  margin-block: 0 1rem;
+  list-style: none;
+}
+
+nav a {
+  text-decoration: none;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+</style>

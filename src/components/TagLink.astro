@@ -1,0 +1,44 @@
+---
+import TagIcon from "@/components/TagIcon.astro";
+
+interface Props {
+  tag: string;
+  count?: number;
+}
+
+const { tag, count } = Astro.props;
+---
+
+<a class="tag-link" href={`/tag/${encodeURIComponent(tag)}/`}>
+  <TagIcon />
+  <span>{tag}</span>
+
+  {count !== undefined && <span class="count">({count})</span>}
+</a>
+
+<style>
+.tag-link {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.25rem 0.4rem;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  background: transparent;
+  border-radius: 0.25rem;
+}
+
+.tag-link:hover {
+  color: var(--color-link);
+  background: rgb(49 87 183 / 7%);
+}
+
+.count {
+  color: #666;
+  font-weight: 400;
+}
+</style>

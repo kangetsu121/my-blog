@@ -1,0 +1,100 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="このブログについて"
+  description="Kangetsu Blog の掲載内容と運営者について"
+>
+  <main class="about-page">
+    <h1>このブログについて</h1>
+
+    <section>
+      <h2>ABOUT</h2>
+
+      <dl>
+        <div>
+          <dt>Blog</dt>
+          <dd>学習メモや読書記録、雑記など</dd>
+        </div>
+        <div>
+          <dt>Zenn</dt>
+          <dd>体系的にまとめた記事</dd>
+        </div>
+        <div>
+          <dt>Qiita</dt>
+          <dd>過去に投稿した記事</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section>
+      <h2>AUTHOR</h2>
+
+      <p>大学院修士課程で認知・教育心理学を学びました。</p>
+      <p>保守コンサルタント -> QAエンジニア -> プラットフォームエンジニア</p>
+    </section>
+
+    <section>
+      <h2>CONTACT</h2>
+
+      <p>
+        ご意見、ご質問などは{' '}
+        <a
+          href="https://x.com/kangetsu_121"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          X
+        </a>
+        {' '}からご連絡ください。
+      </p>
+    </section>
+  </main>
+</BaseLayout>
+
+<style>
+.about-page {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+
+.about-page section {
+  padding: clamp(1rem, 4vw, 1.5rem);
+  margin-block: 1.5rem;
+  background: var(--color-surface);
+  border: 1px solid rgb(0 0 0 / 12%);
+  border-radius: 1rem;
+}
+
+.about-page section h2 {
+  margin-block-start: 0;
+}
+
+.about-page dl {
+  margin: 0;
+}
+
+.about-page dl > div {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 1rem;
+  padding-block: 0.5rem;
+}
+
+.about-page dt {
+  font-weight: 700;
+}
+
+.about-page dd {
+  margin: 0;
+}
+
+@media (width <= 480px) {
+  .about-page dl > div {
+    grid-template-columns: 1fr;
+    gap: 0.125rem;
+  }
+}
+</style>

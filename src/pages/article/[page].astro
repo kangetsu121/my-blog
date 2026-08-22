@@ -1,0 +1,62 @@
+---
+import type { GetStaticPaths, InferGetStaticPropsType } from "astro";
+
+import ArticleList from "@/components/ArticleList.astro";
+import Pagination from "@/components/Pagination.astro";
+import { ARTICLES_PER_PAGE } from "@/config/site";
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { getArticles } from "@/lib/articles";
+
+export const getStaticPaths = (async ({ paginate }) => {
+  const articles = await getArticles();
+
+  return paginate(articles, {
+    pageSize: ARTICLES_PER_PAGE,
+  }).filter(({ params }) => params.page !== "1");
+}) satisfies GetStaticPaths;
+
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+
+const { page } = Astro.props as Props;
+
+const title = `記事一覧 ${page.currentPage}ページ目`;
+const description = `Kangetsu Blog 記事一覧、${page.currentPage}ページ目`;
+
+const previousPagePath =
+  page.currentPage === 2 ? "/" : `/article/${page.currentPage - 1}/`;
+
+const nextPagePath =
+  page.currentPage < page.lastPage
+    ? `/article/${page.currentPage + 1}/`
+    : undefined;
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  previousPagePath={previousPagePath}
+  nextPagePath={nextPagePath}
+>
+  <main class="article-index">
+    <h1>記事一覧</h1>
+
+    <p>{page.currentPage} / {page.lastPage}ページ</p>
+
+    <ArticleList articles={page.data} />
+
+    <Pagination
+      currentPage={page.currentPage}
+      totalPages={page.lastPage}
+      firstPagePath="/"
+      basePath="/article"
+    />
+  </main>
+</BaseLayout>
+
+<style>
+.article-index {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+</style>

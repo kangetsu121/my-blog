@@ -1,0 +1,68 @@
+.prose {
+  width: 100%;
+  min-width: 0;
+  max-width: var(--article-width);
+  overflow-wrap: anywhere;
+}
+
+.prose h2 {
+  margin-block: clamp(3rem, 8vw, 5rem) clamp(1rem, 4vw, 2rem);
+  line-height: 1.4;
+}
+
+.prose p {
+  margin-block: 1.5rem;
+  line-height: 1.9;
+}
+
+.prose pre {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: clamp(0.75rem, 3vw, 1rem);
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  border-radius: 0.5rem;
+}
+
+.prose :not(pre) > code {
+  padding: 0.1em 0.35em;
+  background: rgb(0 0 0 / 7%);
+  border-radius: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.prose table {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prose th,
+.prose td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgb(0 0 0 / 20%);
+}
+
+.prose th {
+  text-align: start;
+  background: var(--color-surface);
+}
+
+.prose blockquote {
+  margin-inline: 0;
+  padding-inline-start: 1rem;
+  color: #666;
+  border-inline-start: 0.25rem solid #999;
+}
+
+.prose img,
+.prose video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}

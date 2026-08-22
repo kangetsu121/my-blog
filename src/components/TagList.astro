@@ -1,0 +1,35 @@
+---
+import TagLink from "@/components/TagLink.astro";
+
+interface Props {
+  tags: string[];
+}
+
+const { tags } = Astro.props;
+---
+
+{tags.length > 0 && (
+  <ul class="tag-list" aria-label="記事のタグ">
+    {tags.map((tag) => (
+      <li>
+        <TagLink tag={tag} />
+      </li>
+    ))}
+  </ul>
+)}
+
+<style>
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin-block: 1rem;
+  list-style: none;
+}
+
+.tag-list > li {
+  min-width: 0;
+  max-width: 100%;
+}
+</style>

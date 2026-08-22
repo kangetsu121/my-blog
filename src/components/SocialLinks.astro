@@ -1,0 +1,76 @@
+---
+import { Image } from "astro:assets";
+
+import githubLogo from "@/assets/GitHub-Mark-64px.png";
+import qiitaLogo from "@/assets/qiita-logo-background-color.png";
+import xLogo from "@/assets/x-logo.png";
+import zennLogo from "@/assets/zenn-logo.png";
+
+const links = [
+  {
+    href: "https://x.com/kangetsu_121",
+    label: "X",
+    image: xLogo,
+  },
+  {
+    href: "https://zenn.dev/kangetsu_121",
+    label: "Zenn",
+    image: zennLogo,
+  },
+  {
+    href: "https://qiita.com/kangetsu121",
+    label: "Qiita",
+    image: qiitaLogo,
+  },
+  {
+    href: "https://github.com/kangetsu121",
+    label: "GitHub",
+    image: githubLogo,
+  },
+];
+---
+
+<nav aria-label="外部サイト">
+  <ul class="social-links">
+    {links.map(({ href, label, image }) => (
+      <li>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${label}を新しいタブで開く`}
+        >
+          <Image src={image} alt="" height={24} densities={[1, 2]}
+  format="png" />
+        </a>
+      </li>
+    ))}
+  </ul>
+</nav>
+
+<style>
+.social-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0;
+  margin-block: 0 1rem;
+  list-style: none;
+}
+
+.social-links a {
+  display: grid;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.625rem;
+  place-items: center;
+  background: transparent;
+  border-radius: 0.5rem;
+}
+
+.social-links a:hover,
+.social-links a:focus-visible {
+  background: rgb(0 0 0 / 6%);
+}
+</style>

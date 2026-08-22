@@ -1,0 +1,71 @@
+---
+import { getCollection } from "astro:content";
+
+import TagIcon from "@/components/TagIcon.astro";
+import TagLink from "@/components/TagLink.astro";
+import BaseLayout from "@/layouts/BaseLayout.astro";
+
+const articles = await getCollection("article");
+
+const tagCounts = new Map<string, number>();
+
+for (const article of articles) {
+  for (const tag of article.data.tags) {
+    tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  }
+}
+
+const tags = [...tagCounts.entries()]
+  .map(([name, count]) => ({ name, count }))
+  .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+---
+
+<BaseLayout title="タグ一覧" description="Kangetsu Blog ブログ記事タグ一覧">
+  <main class="tag-index">
+    <h1 class="tag-heading">
+      <span class="tag-heading-icon">
+        <TagIcon size={32} />
+      </span>
+      タグ一覧
+    </h1>
+
+    <ul class="tag-list">
+      {tags.map(({ name, count }) => (
+          <li>
+            <TagLink tag={name} count={count} />
+          </li>
+        ))}
+    </ul>
+  </main>
+</BaseLayout>
+
+<style>
+.tag-index {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+
+.tag-heading {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.tag-heading-icon {
+  color: var(--color-link);
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.tag-list > li {
+  min-width: 0;
+  max-width: 100%;
+}
+</style>

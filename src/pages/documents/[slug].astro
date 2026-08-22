@@ -1,0 +1,41 @@
+---
+import { getCollection, render } from "astro:content";
+
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import "@/styles/prose.css";
+
+export async function getStaticPaths() {
+  const documents = await getCollection("document");
+
+  return documents.map((document) => ({
+    params: {
+      slug: document.id,
+    },
+    props: {
+      document,
+    },
+  }));
+}
+
+const { document } = Astro.props;
+const { Content } = await render(document);
+---
+
+<BaseLayout title={document.data.title} description={document.data.description}>
+  <main class="document-page">
+    <article>
+      <h1>{document.data.title}</h1>
+      <div class="prose">
+        <Content />
+      </div>
+    </article>
+  </main>
+</BaseLayout>
+
+<style>
+.document-page {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+</style>

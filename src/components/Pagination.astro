@@ -1,0 +1,143 @@
+---
+interface Props {
+  currentPage: number;
+  totalPages: number;
+  firstPagePath: string;
+  basePath: string;
+}
+
+const { currentPage, totalPages, firstPagePath, basePath } = Astro.props;
+
+type PageItem = number | "ellipsis";
+
+function createPageItems(currentPage: number, totalPages: number): PageItem[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const visiblePages = [
+    1,
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    totalPages,
+  ].filter((page) => page >= 1 && page <= totalPages);
+
+  const sortedPages = [...new Set(visiblePages)].sort((a, b) => a - b);
+
+  const items: PageItem[] = [];
+
+  for (const page of sortedPages) {
+    const previousItem = items.at(-1);
+
+    if (typeof previousItem === "number") {
+      const difference = page - previousItem;
+
+      if (difference === 2) {
+        items.push(previousItem + 1);
+      } else if (difference > 2) {
+        items.push("ellipsis");
+      }
+    }
+
+    items.push(page);
+  }
+
+  return items;
+}
+
+const pageItems = createPageItems(currentPage, totalPages);
+
+const getPagePath = (page: number) =>
+  page === 1 ? firstPagePath : `${basePath}/${page}/`;
+---
+
+{totalPages > 1 && (
+  <nav class="pagination" aria-label="ページネーション">
+    <ul>
+      <li>
+        {currentPage > 1 ? (
+          <a
+            href={getPagePath(currentPage - 1)}
+            rel="prev"
+          >
+            前へ
+          </a>
+        ) : (
+          <span class="disabled">前へ</span>
+        )}
+      </li>
+
+      {pageItems.map((item) =>
+        item === "ellipsis" ? (
+          <li class="ellipsis" aria-hidden="true">
+            <span>…</span>
+          </li>
+          ) : (
+          <li>
+            {item === currentPage ? (
+              <span class="current" aria-current="page">
+                {item}
+              </span>
+            ) : (
+              <a href={getPagePath(item)}>{item}</a>
+            )}
+          </li>
+          ),
+        )}
+
+      <li>
+        {currentPage < totalPages ? (
+          <a
+            href={getPagePath(currentPage + 1)}
+            rel="next"
+          >
+            次へ
+          </a>
+        ) : (
+          <span class="disabled">次へ</span>
+        )}
+      </li>
+    </ul>
+  </nav>
+)}
+
+<style>
+.pagination {
+  margin-block: 3rem;
+}
+
+.pagination ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0;
+  list-style: none;
+}
+
+.pagination a,
+.pagination span {
+  display: grid;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0.4rem;
+  place-items: center;
+  border-radius: 0.25rem;
+}
+
+.pagination a {
+  text-decoration: none;
+  background: var(--color-surface);
+  border: 1px solid currentcolor;
+}
+
+.current {
+  color: var(--color-surface);
+  background: var(--color-link);
+}
+
+.disabled {
+  color: #777;
+}
+</style>

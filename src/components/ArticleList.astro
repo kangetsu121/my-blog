@@ -1,0 +1,32 @@
+---
+import type { CollectionEntry } from "astro:content";
+import ArticleCard from "@/components/ArticleCard.astro";
+
+interface Props {
+  articles: CollectionEntry<"article">[];
+}
+
+const { articles } = Astro.props;
+---
+
+<ul class="article-list">
+  {articles.map((article, index) => (
+      <li>
+        <ArticleCard article={article} priority={index === 0} />
+      </li>
+    ))}
+</ul>
+
+<style>
+.article-list {
+  display: grid;
+  gap: 2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.article-list > li {
+  min-width: 0;
+}
+</style>

@@ -1,0 +1,59 @@
+---
+import { getCollection, render } from "astro:content";
+
+import ArticleDates from "@/components/ArticleDates.astro";
+import TagList from "@/components/TagList.astro";
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import "@/styles/prose.css";
+
+export async function getStaticPaths() {
+  const articles = await getCollection("article");
+
+  return articles.map((article) => ({
+    params: {
+      slug: article.id,
+    },
+    props: {
+      article,
+    },
+  }));
+}
+
+const { article } = Astro.props;
+const { Content } = await render(article);
+---
+
+<BaseLayout
+  title={article.data.title}
+  description={article.data.description}
+  ogImage={article.data.thumbnail}
+  ogImageAlt={article.data.thumbnailAlt || article.data.title}
+  pageType="article"
+  publishedAt={article.data.publishedAt}
+  updatedAt={article.data.updatedAt}
+>
+  <main class="article-page">
+    <article>
+      <h1>{article.data.title}</h1>
+
+      <ArticleDates
+        publishedAt={article.data.publishedAt}
+        updatedAt={article.data.updatedAt}
+      />
+
+      <TagList tags={article.data.tags} />
+
+      <div class="prose">
+        <Content />
+      </div>
+    </article>
+  </main>
+</BaseLayout>
+
+<style>
+.article-page {
+  width: 100%;
+  max-width: var(--article-width);
+  margin-inline: auto;
+}
+</style>
