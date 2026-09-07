@@ -1,0 +1,39 @@
+---
+const measurementId = (import.meta.env.PUBLIC_GA_MEASUREMENT_ID ?? "").trim();
+
+const enabled = import.meta.env.PROD && /^G-[A-Z0-9]+$/i.test(measurementId);
+
+const analyticsScript = `
+window.dataLayer = window.dataLayer || [];
+
+function gtag(...args) {
+  window.dataLayer.push(args);
+}
+
+gtag("consent", "default", {
+  ad_storage: "denied",
+  analytics_storage: "denied",
+  ad_user_data: "denied",
+  ad_personalization: "denied",
+});
+
+gtag("js", new Date());
+
+gtag("config", ${JSON.stringify(measurementId)}, {
+  allow_google_signals: false,
+  allow_ad_personalization_signals: false,
+});
+`;
+---
+
+{enabled && (
+  <>
+    <script is:inline set:html={analyticsScript} />
+
+    <script
+      is:inline
+      async
+      src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`}
+    ></script>
+  </>
+)}

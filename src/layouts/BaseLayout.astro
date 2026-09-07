@@ -4,6 +4,7 @@ import type { ImageMetadata } from "astro";
 
 import favicon from "@/assets/favicon.png";
 import defaultOgImage from "@/assets/logo.png";
+import Analytics from "@/components/Analytics.astro";
 import Footer from "@/components/Footer.astro";
 import Header from "@/components/Header.astro";
 import "@/styles/global.css";
@@ -75,6 +76,7 @@ const articleStructuredDataJson = articleStructuredData
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <Analytics />
     {noindex && <meta name="robots" content="noindex, nofollow" />}
 
     <title>{pageTitle}</title>
