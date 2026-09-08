@@ -1,0 +1,81 @@
+---
+title: '/dev/urandom からの read は 1回当たり 32MB が上限なので注意'
+description: 'Linux の /dev/urandom から1回の read で取得できるデータには約32MiBの上限があることを、dd による実験と man の記述から確認します。'
+publishedAt: '2021-07-25'
+updatedAt: '2021-07-25'
+tags: ['Linux']
+---
+
+タイトルの通りです。  
+大容量ファイルを作る必要があったのですが, `dd` でインプットを `/dev/urandom` にしたらはまりました。  
+man にちゃんと書いてあるのでご注意ください。
+
+## 環境情報
+
+```text
+kangetsu@ubuntu18:~
+$ cat /etc/os-release
+NAME="Ubuntu"
+VERSION="18.04.5 LTS (Bionic Beaver)"
+ID=ubuntu
+ID_LIKE=debian
+PRETTY_NAME="Ubuntu 18.04.5 LTS"
+VERSION_ID="18.04"
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+VERSION_CODENAME=bionic
+UBUNTU_CODENAME=bionic
+kangetsu@ubuntu18:~
+```
+
+## 実験結果
+
+`dd` で `/dev/urandom` をインプットとして, 32MB を超えるファイルを作ってみます。
+
+```text
+kangetsu@ubuntu18:~
+$ dd bs=40M count=1 if=/dev/urandom of=experiment.out
+0+1 records in
+0+1 records out
+33554431 bytes (34 MB, 32 MiB) copied, 0.823819 s, 40.7 MB/s
+kangetsu@ubuntu18:~
+```
+
+もうこの時点で 40MB になっていなさそうな出力ですが, 結果を確認します。
+
+```text
+kangetsu@ubuntu18:~
+$ ls -lh experiment.out
+-rw-rw-r-- 1 kangetsu kangetsu 32M Jul 25 10:58 experiment.out
+kangetsu@ubuntu18:~
+```
+
+## /dev/urandom の man
+
+`man urandom` で `urandom` の DESCRIPTION を見ると, 以下のように書いてあります。
+
+```text
+[...]
+       Since Linux 3.16, a read(2) from /dev/urandom will return at most 32 MB.  A read(2) from /dev/random will return at most 512 bytes (340 bytes
+       on Linux kernels before version 2.6.12).
+[...]
+```
+
+32MB という表記ですが, 結果的には 32MiB が正確な値のようです[^1]。
+
+```text
+>>> 33554431 / (1024 * 1024)
+31.999999046325684
+>>>
+```
+
+[^1]: MB (メガバイト) は 1,000,000 (1,000 \* 1,000) Byte, MiB (メビバイト) は 1,048,576 (1,024 \* 1,024) Byte
+
+## 終わりに
+
+`/dev/urandom` から大容量データを作成しようとしてループを回す時などはご注意ください。  
+1ファイルあたり 32MB になってしまっているのは仕様でした。
+
+ちなみに `/dev/zero` は 32MB 縛りなどはありませんでした。

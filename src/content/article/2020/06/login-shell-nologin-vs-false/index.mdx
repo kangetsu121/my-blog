@@ -1,0 +1,231 @@
+---
+title: 'ユーザーのログインシェル: nologin と false 指定時の違い'
+description: 'Linux ユーザーのログインシェルに /sbin/nologin と /bin/false を指定した場合の違いを、SSH 接続などの挙動を確認しながら整理します。'
+publishedAt: '2020-06-30'
+updatedAt: '2020-06-30'
+tags: ['Linux']
+---
+
+LPIC 勉強中に気になったことシリーズ, **ユーザーのログインを禁止する際の指定ログインシェルによる違いについて** です。
+
+LPIC の参考書には, 「ユーザーのログインシェルを `/bin/false` や `/sbin/nologin` にしておくと一般ユーザーのログインを禁止できる」といったことが書かれていました。  
+2通り書かれていたので, それぞれの挙動の違いを確認しました。
+
+## /bin/bash: bash でログイン
+
+まず正常パターンです。  
+ユーザー `general` のログインシェルには, `/bin/bash` が指定されています。
+
+```conf
+# $ grep general /etc/passwd
+general:x:1001:1001:,,,:/home/general:/bin/bash
+kangetsu@ubuntu18:~
+```
+
+この状態で `su` なり `login` なりをすると, 普通に `bash` でログインができます。
+
+```text
+kangetsu@ubuntu18:~
+$ su general
+Password:
+general@ubuntu18:/home/kangetsu$ whoami
+general
+general@ubuntu18:/home/kangetsu$
+```
+
+## /bin/false: ログイン禁止 1
+
+次に, ログイン禁止時に指定でする値の 1つ, `/bin/false` を指定してみます。  
+ちなみに `false` コマンドは exit code 1 を返すだけのコマンドで, これくらいなら C を読めなくてもソースを読めます。
+
+`EXIT_STATUS` を `EXIT_FAILURE` として `true` を実行するので, 結果的に `return EXIT_FAILURE` となります。
+
+- `false` コマンドのソース
+
+```c
+#define EXIT_STATUS EXIT_FAILURE
+#include "true.c"
+```
+
+- `true` コマンドのソース
+
+```c
+[...]
+int
+main (int argc, char \*\*argv)
+{
+  /* Recognize --help or --version only if it's the only command-line
+  argument. */
+  if (argc == 2)
+    {
+      initialize_main (&argc, &argv);
+      set_program_name (argv[0]);
+      setlocale (LC_ALL, "");
+      bindtextdomain (PACKAGE, LOCALEDIR);
+      textdomain (PACKAGE);
+
+      /* Note true(1) will return EXIT_FAILURE in the
+      edge case where writes fail with GNU specific options. */
+      atexit (close_stdout);
+
+      if (STREQ (argv[1], "--help"))
+        usage (EXIT_STATUS);
+
+      if (STREQ (argv[1], "--version"))
+        version_etc (stdout, PROGRAM_NAME, PACKAGE_NAME, Version, AUTHORS,
+                    (char \*) NULL);
+    }
+
+  return EXIT_STATUS;
+}
+```
+
+では, ログインシェルを `/bin/false` にして `su` してみます。
+
+```text
+$ sudo usermod -s /bin/false general
+kangetsu@ubuntu18:~
+$ grep general /etc/passwd
+general:x:1001:1001:,,,:/home/general:/bin/false
+kangetsu@ubuntu18:~
+```
+
+```text
+$ su general
+Password:
+kangetsu@ubuntu18:~
+$ echo $?
+1
+kangetsu@ubuntu18:~
+$ whoami
+kangetsu
+kangetsu@ubuntu18:~
+```
+
+`su` しましたが, ユーザーは変わりませんでした。  
+exit code も 1 になっています。
+
+確かに, ログインシェルを `/bin/false` にすることでログインを禁止することはできていそうです。
+
+## /sbin/nologin: ログイン禁止 2
+
+次に, `/sbin/nologin` を指定してみます。  
+Ubutnu 18.04 では `/usr/sbin/nologin` にあったので, これを指定します。
+
+```text
+$ sudo usermod -s /usr/sbin/nologin general
+kangetsu@ubuntu18:~
+$ grep general /etc/passwd
+general:x:1001:1001:,,,:/home/general:/usr/sbin/nologin
+kangetsu@ubuntu18:~
+```
+
+```text
+$ su general
+Password:
+This account is currently not available.
+kangetsu@ubuntu18:~
+$ echo $?
+1
+kangetsu@ubuntu18:~
+$ whoami
+kangetsu
+kangetsu@ubuntu18:~
+```
+
+`false` の時と同じくログインはできませんでしたが, `This account is currently not available.` と, 親切なメッセージが出ています。
+
+ちなみに, ソースも非常に短く, このくらいなら C が読めなくても読めました。
+基本的にメッセージを出力して, `EXIT_FAILURE` を return しているだけです。
+
+- `nologin` コマンドのソース
+
+```c
+[...]
+int main (void)
+{
+    const char \*user, \*tty;
+
+    tty = ttyname (0);
+    if (NULL == tty) {
+        tty = "UNKNOWN";
+    }
+    user = getlogin ();
+    if (NULL == user) {
+        user = "UNKNOWN";
+    }
+    openlog ("nologin", LOG_CONS, LOG_AUTH);
+    syslog (LOG_CRIT, "Attempted login by %s on %s", user, tty);
+    closelog ();
+
+    printf ("%s", "This account is currently not available.\n");
+    
+    return EXIT_FAILURE;
+}
+```
+
+ログインメッセージが親切なので, `/bin/false` よりも `/sbin/nologin` の方がユーザービリティ的にはよさそうではあります[^1]。
+
+## まとめ
+
+今回のまとめです。
+
+- ユーザーのログインシェルに `/bin/false`, `/sbin/nologin` などを指定すると, そのユーザーのログインを禁止できる
+  - `/sbin/nologin` はアラートメッセージを出してくれるのでユーザビリティは高いのでおすすめ (注1 は要考慮)
+
+## おまけ 1: /etc/nologin
+
+root ユーザー以外のログイン禁止をしたい場合, 1ユーザーずつログインシェルを設定しなくても, `/etc/nologin` を配置すればよいようです。  
+これは `login` コマンドが参照する `login/shadow-4.5/etc/login.defs` で定義されており, コメントを読むと, `NOLOGINS_FILE` に指定されているファイルが存在すると root ユーザーのみがログインできるようになるようです。
+
+任意のファイルに変えられはしますが, とは言えここをいじることはまずないとは思います。
+
+```conf
+[...]
+#
+# If defined, name of file whose presence will inhibit non-root
+# logins. The content of this file should be a message indicating
+# why logins are inhibited.
+#
+NOLOGINS_FILE /etc/nologin
+[...]
+```
+
+## おまけ 2: /bin/true などその他のファイルをログインシェルに指定
+
+ところで, `sh` や `bash` などの特定のファイル以外もログインシェルに指定できることが分かったので, `/bin/true` を指定してみました。
+
+- `/bin/false` は exit code 1 だからログインが拒否される？
+  - ということは `/bin/true` など exit code 0 のものならログインできてしまう？
+  - その場合シェルはどうなる？
+
+といったことが興味のある点でした。
+
+やってみます。
+
+```text
+$ sudo usermod -s /bin/true general
+kangetsu@ubuntu18:~
+$ grep general /etc/passwd
+general:x:1001:1001:,,,:/home/general:/bin/true
+kangetsu@ubuntu18:~
+```
+
+```text
+$ su general
+Password:
+kangetsu@ubuntu18:~
+$ echo $?
+0
+kangetsu@ubuntu18:~
+$ whoami
+kangetsu
+kangetsu@ubuntu18:~
+```
+
+exit code は 0 になりましたが, 結局 `su` はできませんでした。
+
+シェルじゃないので当然と言えば当然かもしれませんが, 言うなれば `/bin/false` でなくても結果的にログインを禁止したような結果にはなりました。  
+しかしあえてこんなことをする必要はないし意図しない挙動が怖いので, おとなしく `/sbin/nologin` などを指定するのが良いと思います。
+
+[^1]: セキュリティ面では, ユーザーが存在することはわかるので......ということは考慮が必要なのかもしれませんが

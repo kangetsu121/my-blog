@@ -1,0 +1,292 @@
+---
+title: /etc/passwd と bash のプロンプトなどの関係について
+description: '/etc/passwd の読み取り権限を変更した実験から、bash のプロンプト表示やユーザー情報の取得と /etc/passwd の関係を確認します。'
+publishedAt: '2020-06-15'
+updatedAt: '2020-06-15'
+tags: ['Linux']
+---
+
+しばらく期間が空きましたが, LPIC を勉強していて気になったことまとめシリーズです。
+LPIC の参考書[^1]にこんな記述がありました。
+
+> しかし /etc/passwd ファイルから一般ユーザーの読み取り権限を削除してしまうと、さまざまな不都合が生じます。たとえば、一般ユーザーではプロンプトが適切に表示されなかったり、ls -l コマンドの表示がおかしくなったりします。
+
+`/etc/passwd` について, 「一般ユーザーが読み取れる必要があるもの」という認識がなかったので, 気になって実際に権限を剥奪するとどうなるのか確認しました。
+
+## /etc/passwd と /etc/shadow について
+
+`/etc/passwd` は, ユーザー情報を格納しているファイルです。  
+以前はここに暗号化されたパスワードも書いてありましたが, 現在はパスワードは `/etc/shadow` に別に書いてあることが一般的です。
+
+それぞれの詳細は man passwd(5), man shadow(5) にあります。
+
+`man 5 passwd`
+
+```text
+[...]
+DESCRIPTION
+    /etc/passwd contains one line for each user account, with seven fields delimited by colons (“:”). These fields are:
+    · login name
+    · optional encrypted password
+    · numerical user ID
+    · numerical group ID
+    · user name or comment field
+    · user home directory
+    · optional user command interpreter
+[...]
+    If the password field is a lower-case “x”, then the encrypted password is actually stored in the shadow(5) file
+    instead; there must be a corresponding line in the /etc/shadow file, or else the user account is invalid. If the password field is any other string, then it will be treated as an encrypted
+    password, as specified by crypt(3).
+[...]
+```
+
+`man 5 shadow`
+
+```text
+[...]
+DESCRIPTION
+    shadow is a file which contains the password information for the system's accounts and optional aging information.
+    This file must not be readable by regular users if password security is to be maintained.
+[...]
+```
+
+`/etc/passwd` は全てのユーザーに read 権限があり, `/etc/shadow` は所有ユーザー/グループ 以外は読み取りもできないようになっています。
+
+```text
+kangetsu@ubuntu18:~
+$ ll /etc/passwd
+-rw-r--r-- 1 root root 1615 Jun 10 00:34 /etc/passwd
+kangetsu@ubuntu18:~
+$ ll /etc/shadow
+-rw-r----- 1 root shadow 1065 Jun 10 00:34 /etc/shadow
+kangetsu@ubuntu18:~
+```
+
+確かに `/etc/shadow` を使っていれば `/etc/passwd` にはもうパスワード情報はないので, 一般ユーザーが読めてもよいと思いますが, なぜデフォルトで, `/etc/passwd` を一般ユーザーが読める設定になっているのか。  
+**そもそも `/etc/shadow` を用意しなくても `/etc/passwd` の一般ユーザーの read 権限をなくせばよいのではないか。**
+
+例えばこう考え, 「セキュリティのために `/etc/passwd` の read 権限を絞ろう！」となると, 冒頭で言及したような問題が起きます。  
+以下で実際に何が起きるか見てみます。
+
+## /etc/passwd の read 権限を剥奪してみる
+
+まず, その他ユーザーの read 権限を剥奪します。
+
+```text
+kangetsu@ubuntu18:~
+$ ll /etc/passwd
+-rw-r--r-- 1 root root 1615 Jun 10 00:34 /etc/passwd
+kangetsu@ubuntu18:~
+$ sudo chmod 640 /etc/passwd
+kangetsu@ubuntu18:~
+$ ll /etc/passwd
+-rw-r----- 1 root root 1615 Jun 10 00:34 /etc/passwd
+kangetsu@ubuntu18:~
+```
+
+何も起こったようには見えません。  
+しかし, 例えばこの状態で新たな `bash` プロセスを実行してみると,
+
+```text
+kangetsu@ubuntu18:~
+$ bash
+I have no name!@ubuntu18:~
+```
+
+このように, 今までユーザー名が表示されていたプロンプトの部分が `I have no name!` になってしまいました。  
+他のユーザー名を参照するコマンドもいくつか打ってみます。
+
+```text
+I have no name!@ubuntu18:~
+$ whoami
+whoami: cannot find name for user ID 1000
+I have no name!@ubuntu18:~
+$ id
+uid=1000 gid=1000(kangetsu) groups=1000(kangetsu),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),108(lxd)
+I have no name!@ubuntu18:~
+```
+
+プロンプトだけでなく, ユーザー名参照がことごとくできなくなっているようです[^2]。
+
+## 原因を探る: /etc/passwd の参照を確認
+
+変化が起きる前後で実施したことは, `/etc/passwd` の read 権限剥奪のみです。  
+本当にこの `/etc/passwd` が参照できないことが原因なのか調べるために, コマンド実行時のシステムコールを表示するコマンド, `strace` で `bash` コマンドの詳細を確認します。  
+なお, 今回は `/etc/passwd` ファイルの参照が見たいので, `open`, `openat` システムコールのみを表示するようにします[^3]。
+
+```text
+kangetsu@ubuntu18:~
+$ strace -e trace=open,openat bash 2>&1
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libtinfo.so.5", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libdl.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/dev/tty", O_RDWR|O_NONBLOCK) = 3
+openat(AT_FDCWD, "/usr/lib/locale/locale-archive", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/nsswitch.conf", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_compat.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_nis.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnsl.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_files.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_systemd.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/librt.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/en_US.UTF-8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US.utf8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.UTF-8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.utf8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US.UTF-8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US.utf8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en.UTF-8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en.utf8/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en/LC_MESSAGES/bash.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/bash.bashrc", O_RDONLY) = 3
+openat(AT_FDCWD, "/home/kangetsu/.bashrc", O_RDONLY) = 3
+openat(AT_FDCWD, "/home/kangetsu/.bash_history", O_RDONLY) = 3
+--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=13526, si_uid=1000, si_status=0, si_utime=0, si_stime=0} ---
+--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=13531, si_uid=1000, si_status=0, si_utime=0, si_stime=0} ---
+openat(AT_FDCWD, "/usr/share/bash-completion/bash_completion", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/init.d/", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
+openat(AT_FDCWD, "/etc/bash_completion.d/", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
+openat(AT_FDCWD, "/etc/bash_completion.d/apport_completion", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/bash_completion.d/cloud-init", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/bash_completion.d/git-prompt", O_RDONLY) = 3
+openat(AT_FDCWD, "/usr/lib/git-core/git-sh-prompt", O_RDONLY) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/etc/bash_completion.d/grub", O_RDONLY) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+openat(AT_FDCWD, "/home/kangetsu/.bash_history", O_RDONLY) = 3
+openat(AT_FDCWD, "/home/kangetsu/.bash_history", O_RDONLY) = 3
+openat(AT_FDCWD, "/lib/terminfo/x/xterm", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/inputrc", O_RDONLY) = 3
+I have no name!@ubuntu18:~
+```
+
+コマンドの実行結果の 14 行目ほどに, `openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)` というエラーが出ています。  
+確かに, `bash` コマンド実行時に `/etc/passwd` を参照していること, そして権限がない場合に read に失敗していることが分かりました (全体としては exit code 0 なので成功していますが)。
+
+`whoami` だともっと短くてわかりやすいので, こちらも載せておきます。
+
+```text
+kangetsu@ubuntu18:~
+$ strace -e trace=open,openat whoami 2>&1
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/locale/locale-archive", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/nsswitch.conf", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_compat.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_nis.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnsl.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_files.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = -1 EACCES (Permission denied)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libnss_systemd.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/librt.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/en_US.UTF-8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US.utf8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.UTF-8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.utf8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US.UTF-8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US.utf8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en_US/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en.UTF-8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en.utf8/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale-langpack/en/LC_MESSAGES/coreutils.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+whoami: cannot find name for user ID 1000
++++ exited with 1 +++
+kangetsu@ubuntu18:~
+```
+
+## bash で /etc/passwd を参照する部分: シェル変数 PS1
+
+そもそもなぜ bash のプロンプトにユーザー名が表示されるかというと, `.bashrc` などでプロンプトを表すシェル変数 `PS1` でログインユーザー名を表示するように設定しているためです。  
+つまり, `PS1` の設定によっては, ユーザー名を表示していない方もいると思います。
+
+以下の man bash(1) にあるように, bash で利用する変数 `PS1` の値では, `\u` がユーザー名を表す特殊文字となっています。
+
+`man 1 bash`
+
+```text
+[...]
+    PS1 The value of this parameter is expanded (see PROMPTING below) and used as the primary prompt string. The default value is ``\s-\v\$ ''.
+[...]
+PROMPTING
+    When executing interactively, bash displays the primary prompt PS1 when it is ready to read a command, and the secondary prompt PS2 when it needs more input to complete a command. Bash
+    displays PS0 after it reads a command but before executing it. Bash allows these prompt strings to be customized by inserting a number of backslash-escaped special characters that are
+    decoded as follows:
+[...]
+    \u the username of the current user
+[...]
+```
+
+例えば私の場合は `.bashrc` 内の `PS1` の値が次のよう `\u` を含むものになっているため, プロンプトにユーザー名が表示されるようになっています。
+
+```text
+$ echo $PS1
+\[\e]0;\u@\h: \w\a\]${debian_chroot:+($debian_chroot)}\u@\h:\w\n\$
+kangetsu@ubuntu18:~
+```
+
+この `PS1` の `\u` で `/etc/passwd` を参照してカレントユーザーのユーザー名を引っ張ってきているんので, `/etc/passwd` が読めないと上述のようにユーザー名が表示できない, そしてこれは `bash` に限らず `whoami` などのユーザー名を表示するコマンドでも同様, ということのようでした。
+
+## まとめ
+
+まとめというほどまとめることもないですが, 結論を改めて書いておきます。
+
+- 基本的に, ユーザー名を表示する機能ではユーザー名の参照は `/etc/passwd` を見ている様子
+  - `bash` のプロンプト, `whoami`, `id` など
+
+初めはコマンドのソースコードを読んで, 具体的に `/etc/passwd` を読んでいる関数などを特定しようとしたのですが, man getlogin(3) までたどり着いたけど `getlogin` のソースが見つけられず断念しました。。  
+しばらく経験を積んだら再挑戦したいです。
+
+また, 冒頭の
+
+> ls -l コマンドの表示がおかしくなったりします
+
+については分からずでした。
+
+## おまけ: /etc/passwd が読めるときの bash の systemcall
+
+おまけとして, `/etc/passwd` が読めるときの `bash` の systemcall `openat` の様子も載せておきます。  
+私の環境では以下のように, ちゃんと opeen したファイルディスクリプタを処理して close まで持っていけていました。
+
+```text
+openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 3
+lseek(3, 0, SEEK_CUR) = 0
+fstat(3, {st_mode=S_IFREG|0644, st_size=1615, ...}) = 0
+mmap(NULL, 1615, PROT_READ, MAP_SHARED, 3, 0) = 0x7f462190c000
+lseek(3, 1615, SEEK_SET) = 1615
+munmap(0x7f462190c000, 1615) = 0
+close(3) = 0
+```
+
+[^1]: 中島 能和; 濱野 賢一朗. Linux教科書 LPICレベル1 Version5.0対応 (Kindle の位置No.6388-6390). 株式会社 翔泳社. Kindle 版.
+[^2]: id コマンドは分かりにくいですが, 本来 uid=1000 の後ろに () があってその中にユーザー名が表示される
+[^3]: open(2) と openat(2) は, 引数に相対パスを指定した場合の基準パスの取り方が違うだけのようで, ファイルをオープンするという機能の本質は同じようでした。詳細は man open(2)

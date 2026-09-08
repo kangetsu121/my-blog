@@ -1,0 +1,87 @@
+---
+title: 第一回 Linux 便利コマンド紹介
+description: 'ps の出力を見やすくする方法、SSH での単発コマンド実行、for 文とコマンド展開など、便利な Linux コマンドの使い方を紹介しました。'
+publishedAt: '2019-05-27'
+updatedAt: '2019-05-27'
+tags: ['Linux']
+---
+
+小ネタです。現職になってから知って感動した・便利だと感じた Linux のコマンドをいくつか紹介します。  
+自分がそうなので, Linux コマンド初心者レベル想定です。  
+Twitter の TL などだと流れてしまうのでこちらに。
+
+## 1. ps コマンドをきれいに表示
+
+　ps コマンドを使うときは大抵 grep と組み合わせますが, そうするとヘッダが切れてしまいます。
+
+```text
+[kangetsu@ubuntu16 ~ Mon May 27 22:48:14]
+$ ps aux | grep ssh
+root 1076 0.0 0.3 65512 6164 ? Ss 08:56 0:00 /usr/sbin/sshd -D
+root 3288 0.1 0.3 92804 6588 ? Ss 22:47 0:00 sshd: kangetsu [priv]
+root 3293 0.0 0.3 92804 6560 ? Ss 22:47 0:00 sshd: kangetsu [priv]
+kangetsu 3406 0.4 0.2 93076 4864 ? S 22:48 0:00 sshd: kangetsu@pts/0
+kangetsu 3412 0.0 0.1 92804 3320 ? S 22:48 0:00 sshd: kangetsu@notty
+kangetsu 3414 0.0 0.0 12880 2028 ? Ss 22:48 0:00 /usr/lib/openssh/sftp-server
+kangetsu 3436 0.0 0.0 14224 968 pts/0 S+ 22:48 0:00 grep --color=auto ssh
+[kangetsu@ubuntu16 ~ Mon May 27 22:48:22]
+```
+
+そこで, head と直列実行の `;` を組み合わせて, きれいなログにしてしまいます。
+
+```text
+[kangetsu@ubuntu16 ~ Mon May 27 22:51:01]
+$ ps aux | head -n1; ps aux | grep -vw "grep" | grep ssh
+USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+root 1076 0.0 0.3 65512 6164 ? Ss 08:56 0:00 /usr/sbin/sshd -D
+root 3288 0.0 0.3 92804 6588 ? Ss 22:47 0:00 sshd: kangetsu [priv]
+root 3293 0.0 0.3 92804 6560 ? Ss 22:47 0:00 sshd: kangetsu [priv]
+kangetsu 3406 0.1 0.2 93076 4864 ? S 22:48 0:00 sshd: kangetsu@pts/0
+kangetsu 3412 0.0 0.1 92804 3320 ? S 22:48 0:00 sshd: kangetsu@notty
+kangetsu 3414 0.0 0.0 12880 2028 ? Ss 22:48 0:00 /usr/lib/openssh/sftp-server
+[kangetsu@ubuntu16 ~ Mon May 27 22:51:12]
+```
+
+こうするとヘッダもついていて非常に読みやすい, ログがきれい。  
+`grep -vw "grep"` でついでに `grep` に引っかかる `grep` 自体のプロセスも除外しています。
+
+## 2. コマンド単発なら ssh -> exit 不要
+
+　リモート環境で調査などで何か単発コマンド実行したいとき, ssh -> コマンド -> exit とすることが素直です。  
+ところが, ssh コマンドに続けてリモート先で実行したいコマンドを記述すると, そのコマンドもそのまま実行してくれるので手間が省けます。
+
+```text
+[LOCAL] ➤ ssh ubuntu16 ls -lAF ./ksnctf/
+total 448
+-rw-rw-r-- 1 kangetsu kangetsu 23072 Mar 8 02:46 dictionary.txt
+-rw-rw-r-- 1 kangetsu kangetsu 6 Mar 8 02:59 flag.txt
+-rw-rw-r-- 1 kangetsu kangetsu 419796 Mar 8 03:28 hashed_word.txt
+-rw-rw-r-- 1 kangetsu kangetsu 2270 Mar 8 03:33 hash_list.txt
+-rwxrwxr-x 1 kangetsu kangetsu 2842 Mar 8 02:33 john.txt\*
+✔
+[2019-05-27 23:17.55] ~
+[LOCAL] ➤
+```
+
+## 3. for 文とコマンド展開を使ってなんちゃってワンライナー
+
+　for 文, 直列実行の `;`, コマンド展開の `$()` を組み合わせて, ワンライナーじみたことができます。
+
+```text
+[kangetsu@ubuntu16 ~ Mon May 27 23:02:06]
+$ for i in $(grep -w "/bin/bash" /etc/passwd | awk -F':' '{print $1}'); do du -sh /home/${i}; done
+du: cannot access '/home/root': No such file or directory
+28M /home/kangetsu
+[kangetsu@ubuntu16 ~ Mon May 27 23:02:14]
+```
+
+この例では, bash を利用するユーザーの home ディレクトリの容量を計測しています。  
+実演用のサンプルなのでコマンド自体は全然実用的ではないです。
+
+なお, コマンド展開自体はバッククォート \`\` でもできますが, バッククォートは入れ子にできないし可読性的にも `$()` がおすすめです。
+
+## 終わり
+
+　以上です, Linux で単発のコマンドに慣れて来たくらいの頃には次のステップとしてぜひ。
+シェル芸楽しいですね。  
+また何かあれば続きます。

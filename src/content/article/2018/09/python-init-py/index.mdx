@@ -1,0 +1,133 @@
+---
+title: 'Python __init__.py の機能について'
+description: 'Python の __init__.py が持つ役割について、パッケージの定義や import 時の処理を実際のコードと実行結果を交えて整理しました'
+publishedAt: '2018-09-16'
+updatedAt: '2018-09-16'
+tags: ['Python']
+---
+
+Pythonのパッケージをインストールすると、**`__init__.py`** というファイルをよく目にします。  
+このファイルの機能がいまいちピンときてなかったので、備忘のためにも調べてまとめました。
+
+## `__init__.py` の機能
+
+### 1. ディレクトリを Python パッケージとして定義
+
+まず、**`__init__.py` が存在するディレクトリを、Python にパッケージとして認識させる** という機能があります。
+
+パッケージとは、複数の `py` ファイルをまとめたものですね。py ファイルの冒頭でよく見る、`import hogehoge` の `hogehoge` の部分がパッケージ名です。
+
+また、パッケージの中の `py` ファイルを **モジュール** と呼び、パッケージ丸ごとでなくモジュール単位での import も可能です。  
+`from hogehoge import fugafuga` の `fugafuga` がモジュールとなります。
+
+つまり、`__init__.py` ファイルをディレクトリに置くことで、**そのディレクトリ内の pyファイルは import して別の pyファイルから利用可能となる** ということになります。この役割だけなら中身は空でもよいらしく、ときどき 0KB の `__init__.py` を見かけるのはそのためです。
+
+### 2. パッケージ・モジュールのインポート時に、記述されたスクリプトを実行
+
+もう一つの機能が、**import された際に `__init__.py` に記述されたスクリプトが実行される** というものです。`__init__.py` という名前からすると、こちらの機能は `initialize` 処理っぽくてしっくりきますね。
+
+実際に例を見てみます。
+
+## 実験: 処理順の確認
+
+実験のため、次のような構成を用意しました。
+
+```text
+│  order_test.py
+│
+└─ init_test
+    │  mod.py
+    │  __init__.py
+    │
+    └─ __pycache__
+```
+
+それぞれの py ファイルの内容は、以下の通りです。実行順の確認のために、print 文を仕込んでいます。
+
+- **`order_test.py`**
+
+    ```py
+    # order_test.py
+    print("before import init_test.mod") # print order-1
+
+    from init_test import mod
+
+    print("order_test.py, right after import") # print order-2
+
+    def func():
+        print(
+        "running order_test.py.func() "
+        "which calls init_test.mod.func()"
+        ) 
+        # print order-3
+        
+        mod.func()
+
+    if __name__ == "__main__":
+        func()
+    ```
+
+- **`__init__.py`**
+
+    ```py
+    # __init__.py
+    print("__init__.py") # print __init__
+    ```
+
+- **`mod.py`**
+
+    ```py
+    # init_test.mod.py  
+    def func():
+        print("running init_test.mod.func()") # print init_test.mod
+    ```
+
+では実際に動かしてみましょう。
+
+## 実行コマンド: python order_test.py
+
+※ `# order-1` などは追記、改行を入れています
+
+```text
+PS C:\workdir\programming\test_initialization> python order_test.py
+
+before import init_test.mod  # order-1
+__init__.py  # __init__
+order_test.py, right after import  # order-2
+running order_test.py.func() which calls init_test.mod.func()  # order-3
+running init_test.mod.func()  # init_test.mod
+
+PS C:\workdir\programming\test_initialization>
+```
+
+`order_test.py` 実行の結果、順番としては、
+
+1. `order_test.py` の上から順に実行が始まる (`# order-1`)
+2. `import` の時点で import 先のパッケージの `__init__.py` に制御が移る (`# __init__`)
+3. `__init__.py` の処理が終わると制御が戻り、呼び出し元の `order_test.py` の処理再開 (`# order-2`, `# order-3`, `# init_test.mod`)
+
+というかたちですね。import 実行時点で制御が移り、`__init__.py` 中のスクリプトが実行されるようです。
+
+## 結論: __init__.pyの 2種の機能とその効果
+
+以上より、`__init__.py` の機能は以下のように結論付けられそうです。
+
+1. 存在するディレクトリをパッケージとして定義
+   - これにより他のモジュールから import して実行可能となる
+2. import された際に記述されたスクリプトを初期化処理のように実行する
+   - 依存関係にあるモジュールのインポートなど、必須だが面倒な作業を記述しておくと楽
+
+## 補足: `__init__.py` の `__name__` と Python3.3 以降でのパッケージ定義方法の変化
+
+機会があれば別途じっくり考えてみるとおもしろそうですが、調査中に知った、`__init__.py` にまつわる重要な点を補足として紹介します。
+
+- `__init__.py` の `__name__` はパッケージ名となる  
+  このため、`__init__.py` を明示的に実行した場合でもない限り[^1]、`__init__.py` 中で `__name__` を出力すると、`${パッケージ名}` となります。つまり、`import` 時に利用した名前と同じになります。
+- **Python3.3 以降では `__init__.py` がなくてもフォルダをパッケージとして認識してくれる**  
+  公式ドキュメントに記載がありますが[^2]、機能1のためだけならば `__init__.py` は不要になった、と言えます。
+
+しかし、初期化処理を利用するケースは多くあるでしょうし、Python3.3 より前のバージョンへパッケージを配布するケースを考えても、当分 `__init__.py` を用意しておくのがよいと思います。
+
+[^1]: `python __init__.py` のようにトップレベルのモジュールとして `__init__.py` を実行すると、この場合は通常のモジュールと同じように `__name__` は `__main__` となりました。
+
+[^2]: 参考: https://docs.python.org/ja/dev/whatsnew/3.3.html#pep-420-implicit-namespace-packages

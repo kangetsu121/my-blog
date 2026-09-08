@@ -1,0 +1,292 @@
+---
+title: 'ShellScript Tips --条件分岐--'
+description: 'ShellScript の条件分岐について、if、test コマンド、終了ステータス、true・false などの仕組みを実例とともに整理します。'
+publishedAt: '2020-04-02'
+updatedAt: '2020-04-02'
+tags: ['Linux']
+---
+
+[前回の記事](/2020/03/shell-script-variables/) では, ShellScript の変数についての基本をいくつか書きました。今回の記事では, **条件分岐** について書きます。
+
+## ShellScript の条件分岐
+
+### 基本: if 句と test コマンド
+
+　プログラミング言語によって条件分岐の記法は微妙に異なりますが, ShellScript の条件分岐では, `if`, `then`, `else`, `fi` を使います。  
+また, 条件文を判定するために, `test` コマンド, または `[` `]` コマンドなどを使います。
+
+```bash
+#!/bin/bash
+if [ ${#} -eq 0 ]
+then
+echo "the number of argument is 0"
+else
+echo "the number of argument is more than 0"
+if [ "${1}" = "hoge" ]
+then
+echo "test starts"
+fi
+fi
+```
+
+サンプルスクリプト中の `${#}` は引数の数を表す特殊変数, `${1}` は 1番目の引数を表す特殊変数です。  
+また, サンプルでは `if` を入れ子にしています。
+
+上のサンプルのように, `if` に続ける条件式は, ShellScript では `test` コマンド (`[`) を使って評価します。  
+`test` コマンドは, 引数として渡した `EXPRESSION` の評価をするコマンドです。  
+利用可能な比較演算子には種類が多くありますが, サンプルでは左辺と右辺の数値が等しいかを評価する `-eq`, 左辺と右辺の文字列が等しいかを評価する `=` を使っています[^1]。  
+なお, **`test` コマンドは `[` とも表すことができ, `[` を使った場合は条件式の終わりを示す目的で `]` も必要になります**。  
+この表記は以下の通り `man` にも書いてあります。
+
+```text
+TEST(1) User Commands TEST(1)
+NAME
+    test - check file types and compare values
+SYNOPSIS
+    test EXPRESSION
+    test
+
+    [ EXPRESSION ]
+    [ ]
+    [ OPTION
+[...]
+```
+
+`test` と `[` が同じものを指すことは, 以下のようにそれぞれの `man` の `diff` がないことからもわかります。
+
+```text
+[kangetsu@ubuntu16 ~ Tue Mar 31 15:50:25]
+$ diff <(man test) <(man [)
+[kangetsu@ubuntu16 ~ Tue Mar 31 15:50:28]
+```
+
+**`[` はいわゆる括弧などの記号ではなく立派なコマンド** なので, スペースを空けて引数を渡してやる必要があります。  
+よくあるミスとして, **`[` を単なる記号と勘違いして `if [a = b]` などのように書くと, 以下のようにエラーになります**。
+
+```text
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:26]
+$ a=1
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:29]
+$ b=2
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:30]
+$ [a = b]
+[a: command not found <- スペースが空いていないので `[a` で 1つのコマンドと解釈されている
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:34]
+$ [ a = b ]
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:38]
+$ echo $?
+1 <- 1 != 2 なのでちゃんと評価されて exit code 1 が返っている
+[kangetsu@ubuntu16 ~ Tue Mar 31 16:08:43]
+```
+
+少し脱線しましたが, 以下が冒頭のサンプルの実行結果です。
+
+```bash
+#!/bin/bash
+if [ ${#} -eq 0 ]
+then
+echo "the number of argument is 0"
+else
+echo "the number of argument is more than 0"
+if [ "${1}" = "hoge" ]
+then
+echo "test starts"
+fi
+fi
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Tue Mar 31 16:21:37]
+$ bash if_test.sh
+the number of argument is 0
+[kangetsu@ubuntu16 shell_tips Tue Mar 31 16:22:07]
+$ bash if_test.sh aaa
+the number of argument is more than 0
+[kangetsu@ubuntu16 shell_tips Tue Mar 31 16:22:15]
+$ bash if_test.sh hoge
+the number of argument is more than 0
+test starts
+[kangetsu@ubuntu16 shell_tips Tue Mar 31 16:22:19]
+```
+
+引数の数, 第一引数が `hoge` か否かによって結果が分岐していることが確認できます。
+
+### test コマンドでよく使う評価演算子
+
+　上のサンプルでは, `test` コマンドの比較演算子として `-eq`, `=` を使っています。
+他にも種類があり, 特に私がよく使うものを挙げておきます。  
+意外といろいろあるので, この他にも `man test` を見ると便利なものを見つけられるかもしれません。
+
+1. `-a` と `-o`
+   - `AND` 演算子と `OR` 演算子
+2. `-n` と `-z`
+   - 文字列長が `is nonzero` と `is zero`
+   - 変数が空値か否かの判定によく使う
+3. `-ge`, `-gt`, `-le`, `-lt`
+   - `(greater|less) (equal|than)`, よくあるやつ
+   - ShellScript では `<`, `>`, `<=`, `>=` は使えないのでこちらを使う
+4. `-d` と `-f`
+   - 続く引数が存在し, かつ `directory` か, `regular file` か
+   - 存在チェックに使える
+5. `-nt` と `-ot`
+   - 左辺のファイルが右辺のファイルより `newer than` か `older than` か
+
+### if に「成否を評価したいコマンド」を渡す
+
+　こちらもよく使います。  
+よく「あるコマンドを実行し, 失敗したら `return 1` や `exit 1` してエラーメッセージを出す」みたいなことをします[^2]。  
+`if` 文では, 評価したいコマンドを渡すと, その exit code が 0 か否かで true, false のような評価をしてくれます。
+
+このため, 次のような記述ができます。
+
+```bash
+#!/bin/bash
+if ! ssh "${HOST}" echo "This is test" > /home/workdir/test.txt; then
+   echo "test failed!"
+   return 1
+fi
+```
+
+このサンプルでは, `${HOST}` に `ssh` して `/home/workdir/test.txt` を作成しようとしています[^3]。  
+`if` の直後の `!` は否定演算子なので, `ssh` から始まる一連のコマンドが失敗したら, "test failed!" という文字列を出力して exit code 1 を返すようにしています。
+
+### exit code について
+
+exit code は, コマンドの実行結果を表す数値です。  
+コマンド実行が正常終了すると 0, 異常時はそれ以外の数値を返します[^4]。  
+また, 直前に実行したコマンドの exit code は特殊変数 `$?` に格納されます。
+
+コマンドラインツールの試験時は, よく次のように exit code を echo して確認したりしています。
+
+```text
+[kangetsu@ubuntu16 coreutils Thu Apr 02 20:35:52]
+$ cat hoge
+cat: hoge: No such file or directory
+[kangetsu@ubuntu16 coreutils Thu Apr 02 21:51:11]
+$ echo $?
+1 <- 失敗しているので exit code 1
+[kangetsu@ubuntu16 coreutils Thu Apr 02 21:51:14]
+```
+
+これを利用して, 当初は次のようなコードを ShellScript に書いていました。
+
+```bash
+#!/bin/bash
+ssh "${HOST}" echo "This is test" > /home/workdir/test.txt
+if [ "${?}" -ne 0 ]; then
+   echo "test failed!"
+   return 1
+fi
+```
+
+しかし, 上で述べたように if 句で直接コマンドを評価してしまえば, 多少記述を省略できます。  
+可読性も特に損なわないので, 今は if で直接コマンド評価をする方を使っています。
+
+## まとめ
+
+　今回のまとめです。  
+基本的なことばかりですが, exit code はよく参照するので, 覚えておいて損はないです。
+
+ShellScript における条件分岐基本
+
+1. if 句の後に test コマンド ([, ]) で条件評価する
+2. [, ] コマンドと一緒に使える比較演算子には便利なものがあるので man test(1) を見てみよう
+3. コマンド実行成否判定なら test を使わず if の後にコマンドを続ければよい
+4. exit code は割と使う, echo $? で見られるので覚えておきたい
+
+## おまけ: true と false
+
+　exit code の話が出たのでおまけに。  
+SHellScript を読んでいて, もしかしたら `true`, `false` という記述に出会うかもしれません。  
+ところが ShellScript には原則 **データ型はない** ので, boolean 型の値というわけでもありません[^5]。
+
+これは何かというと, man もある, 歴としたコマンドです。
+
+```text
+TRUE(1) User Commands TRUE(1)
+NAME
+true - do nothing, successfully
+SYNOPSIS
+true [ignored command line arguments]
+true OPTION
+DESCRIPTION
+Exit with a status code indicating success.
+[...]
+```
+
+```text
+FALSE(1) User Commands FALSE(1)
+NAME
+false - do nothing, unsuccessfully
+SYNOPSIS
+false [ignored command line arguments]
+false OPTION
+DESCRIPTION
+Exit with a status code indicating failure.
+[...]
+```
+
+以下のように, 正常終了, 異常終了を示す exit code をそれぞれ返すだけのコマンドです。
+
+```text
+[kangetsu@ubuntu16 coreutils Thu Apr 02 22:09:39]
+$ true; echo $?
+0
+[kangetsu@ubuntu16 coreutils Thu Apr 02 22:09:50]
+$ false; echo $?
+1
+[kangetsu@ubuntu16 coreutils Thu Apr 02 22:09:52]
+```
+
+`while true` みたいな感じで出会うことがもしかしたらあるかもしれないです[^6]。  
+私は初見で「boolean 型がある？　-> データ型がある？」と勘違いしたので, お気をつけて。
+
+`true` のソースの main はこんな感じでした[^7]。  
+`help`, `version` という唯一受け取れる引数の判定, 処理以外で見ると, `return EXIT_STATUS` してるだけのようです。
+
+```c
+[...]
+/* Act like "true" by default; false.c overrides this. */
+#ifndef EXIT_STATUS
+# define EXIT_STATUS EXIT_SUCCESS
+#endif
+[...]
+int
+main (int argc, char **argv)
+{
+  /* Recognize --help or --version only if it's the only command-line
+     argument. */
+  if (argc == 2)
+    {
+      initialize_main (&argc, &argv);
+      set_program_name (argv[0]);
+      setlocale (LC_ALL, "");
+      bindtextdomain (PACKAGE, LOCALEDIR);
+      textdomain (PACKAGE);
+      /* Note true(1) will return EXIT_FAILURE in the
+         edge case where writes fail with GNU specific options. */
+      atexit (close_stdout);
+      if (STREQ (argv[1], "--help"))
+      usage (EXIT_STATUS);
+      if (STREQ (argv[1], "--version"))
+      version_etc (stdout, PROGRAM_NAME, PACKAGE_NAME, Version, AUTHORS,
+      (char *) NULL);
+    }
+  return EXIT_STATUS;
+}
+```
+
+`false` は `true` の `EXIT_STATUS` の定義を反転させただけの 2行のソースでした。
+
+```c
+#define EXIT_STATUS EXIT_FAILURE
+#include "true.c"
+```
+
+[^1]: 数値も = で評価できますが, 数値を評価している, という意味を表すために -eq を使った方が可読性はよいと思います
+[^2]: return, exit の後の 1 は exit code です, すぐ後で出てきます
+[^3]: このサンプルに特に実用性はありません
+[^4]: 詳しくは こちらの記事 が参考になりました。原文は こちら
+[^5]: bash や zsh で declare, typeset で宣言した場合は定義できるみたいですね
+[^6]: while : で同じことができて, こちらの方が簡便なのでほとんど見ることはないかも
+[^7]: 一部省略

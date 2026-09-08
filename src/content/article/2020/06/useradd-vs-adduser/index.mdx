@@ -1,0 +1,384 @@
+---
+title: useradd と adduser の特徴と違い
+description: 'Linux でユーザーを作成する useradd と adduser の違いを、デフォルト設定、/etc/skel、/etc/login.defs などの関連設定とともに整理します。'
+publishedAt: '2020-06-21'
+updatedAt: '2020-06-21'
+tags: ['Linux']
+---
+
+LPIC 気になったことシリーズ, 今回は 2種類存在するユーザー追加コマンドについてです。  
+私が読んだ LPIC の本[^1]では, Linux のユーザー追加コマンドとして `useradd` が紹介されており, 脚注で 「Debian 系では `adduser` の利用が推奨」と紹介されていました。
+
+ただ本文中ではそれぞれの違いについては触れられておらず, 私が普段使うディストリビューションが Ubuntu なこともあり, これらコマンドについて少し調べました。
+
+## useradd と adduser の主な違い
+
+初めから結論を書きます。  
+私が調べた範囲では, これらコマンドの違いは主に以下です[^2]。
+
+- `useradd`
+  - デフォルトで多くのディストリビューションに存在
+  - コマンド実行時に **インタラクションが発生しない**
+    - 作成時にパスワードが設定されないので `passwd` コマンドで後から設定が必要
+  - 参照する設定ファイル類は以下
+    - `/etc/default/useradd`: デフォルトのログインシェルは `/bin/sh`
+    - `/etc/skel/`
+      - `.bash_logout`
+      - `.bashrc`
+      - `.profile`
+    - `/etc/login.defs`
+- `adduser`
+  - Debian 系ディストリビューションに存在
+    - CentOS などにも存在するが `useradd` へのシンボリックリンクになっていることが多い
+  - コマンド実行時に **インタラクションが発生**, 一部設定はそこで入力
+    - パスワードもここで聞かれて設定するので, コマンド実行後すぐにユーザーログイン可能
+  - 参照する設定ファイル類は以下
+    - `/etc/adduser.conf`
+    - `/usr/local/sbin/adduser.local`
+    - `/etc/skel/`
+      - `.bash_logout`
+      - `.bashrc`
+      - `.profile`
+
+それぞれを触った感覚として, 大きな違いは **インタラクションの有無** かなと思いました。
+デフォルトの設定値にも違いはありますが, それらはコマンド実行時のオプション指定や, 設定ファイルの値を変えることで対応できるためです。
+
+インタラクションが発生する `adduser` は, 管理者が手動でコマンドを実行し, 数名分のアカウントを作る場合は親切で便利です。  
+コマンド操作に詳しくないユーザーでも, **指示に従うだけで多数の設定値が入力済みの, すぐに使えるユーザーを作ることができます**。  
+これが `useradd` の場合, 設定された値も `adduser` よりは少なく, かつパスワードの設定は別途 `passwd` で行わなければいけないため, 2段階の設定が必要です。
+
+一方で, **インタラクションが発生しないということは, 自動化が容易** ということでもあります。  
+例えば数十名分のアカウントを作成しなければいけない場合, `useradd` なら `for` や `while` でユーザーアカウント名を列挙したファイルを読んで処理するだけで, ユーザー作成自体はすぐ完了できます。  
+インタラクションがある `adduser` の場合, 毎回パスワードや他の設定値の設定を対話的に行うため, 自動化は少し厳しそうです[^3]。
+
+一応 `adduser` でも, オプションを指定すればインタラクションをスキップして, `useradd` のようにパスワードは後から入力, という形にはできます。
+
+このあたりの細かい点も含め, 以下ではそれぞれのコマンドの man や設定を見ていきます。
+
+## useradd について
+
+- ユーザー追加コマンド
+  - デフォルト値 + オプションで指定した値を使ってユーザー追加
+- `-D` でデフォルト値を確認
+- インタラクションなし
+- パスワードは後で別途設定
+
+### man useradd(8)
+
+```text
+[...]
+DESCRIPTION
+    useradd is a low level utility for adding users. On Debian, administrators should usually use adduser(8) instead.
+    When invoked without the -D option, the useradd command creates a new user account using the values specified on the command line plus the default values from the system. Depending on
+    command line options, the useradd command will update system files and may also create the new user's home directory and copy initial files.
+    By default, a group will also be created for the new user (see -g, -N, -U, and USERGROUPS_ENAB).
+[...]
+CONFIGURATION
+    The following configuration variables in /etc/login.defs change the behavior of this tool:
+[...]
+FILES
+[...]
+    /etc/default/useradd
+        Default values for account creation.
+    /etc/skel/
+        Directory containing default files.
+[...]
+    /etc/login.defs
+       Shadow password suite configuration.
+[...]
+```
+> useradd is a low level utility for adding users. On Debian, administrators should usually use adduser(8) instead.
+
+このように, man にもはっきりと「`adduser` を推奨」と書かれています。
+
+### useradd -D: デフォルト設定値
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ useradd -D
+GROUP=100
+HOME=/home
+INACTIVE=-1
+EXPIRE=
+SHELL=/bin/sh
+SKEL=/etc/skel
+CREATE_MAIL_SPOOL=no
+kangetsu@ubuntu18:~/useradd
+```
+
+特徴的なデフォルト値として, `SHELL=/bin/sh` とある通り, ログインシェルが Bourne Shell なことがあります。  
+曰く移植性のため, といった説明があったかと思います (bash がない環境もあるので)。
+
+### /etc/default/useradd
+
+```text
+$ grep -E ^[^#] /etc/default/useradd
+SHELL=/bin/sh
+kangetsu@ubuntu18:~/useradd
+```
+
+ログインシェルはこの設定ファイルで定義されています。  
+上ではコメントアウトされている部分以外を抽出しています。
+
+### /etc/skel/
+
+```text
+$ ls -A /etc/skel/
+.bash_logout .bashrc .profile
+```
+
+`/etc/skel` は, ユーザーのホームディレクトリ作成時に, そこに置かれる `.profile` などのファイルのひな型があるディレクトリです。
+
+### /etc/login.defs
+
+```text
+$ grep -E ^[^#] /etc/login.defs
+MAIL_DIR /var/mail
+FAILLOG_ENAB yes
+LOG_UNKFAIL_ENAB no
+LOG_OK_LOGINS no
+SYSLOG_SU_ENAB yes
+SYSLOG_SG_ENAB yes
+FTMP_FILE /var/log/btmp
+SU_NAME su
+HUSHLOGIN_FILE .hushlogin
+ENV_SUPATH PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV_PATH PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
+TTYGROUP tty
+TTYPERM 0600
+ERASECHAR 0177
+KILLCHAR 025
+UMASK 022
+PASS_MAX_DAYS 99999
+PASS_MIN_DAYS 0
+PASS_WARN_AGE 7
+UID_MIN 1000
+UID_MAX 60000
+GID_MIN 1000
+GID_MAX 60000
+LOGIN_RETRIES 5
+LOGIN_TIMEOUT 60
+CHFN_RESTRICT rwh
+DEFAULT_HOME yes
+USERGROUPS_ENAB yes
+ENCRYPT_METHOD SHA512
+kangetsu@ubuntu18:~/useradd
+```
+
+`/etc/login.defs` では各種ユーザー作成などに関わる設定値が記述されているようです。  
+man login.defs(5) の記述によると, `shadow password suite configuration` と説明されています。
+
+### useradd 実行
+
+では `useradd` を実際に実行して, `user_ua1` というユーザーを作成してみます (初めはわざと `sudo` なしで実行して失敗しています)。
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ useradd user_ua
+useradd: Permission denied.
+useradd: cannot lock /etc/passwd; try again later.
+kangetsu@ubuntu18:~/useradd
+$ sudo useradd user_ua1
+kangetsu@ubuntu18:~/useradd
+$ grep user_ua1 /etc/passwd
+user_ua1:x:1002:1002::/home/user_ua1:/bin/sh
+kangetsu@ubuntu18:~/useradd
+```
+
+作成時にパスワードは聞かれず, `/etc/shadow` のパスワードフィールドは `!` になっています。  
+このため, ユーザー作成後に別途 `passwd` でパスワードを設定する必要があります。
+
+`/etc/shadow` の方は以下のようになっていました。
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ sudo grep user_ua /etc/shadow
+user_ua1:!:18430:0:99999:7:::
+user_ua2:!:18430:0:99999:7:::
+kangetsu@ubuntu18:~/useradd
+```
+
+なお, パスワードフィールドが `!` になっている場合は, man shadow(5) によれば, パスワードがロックされていることを示すようです。  
+さらにパスワードの値もまだ空なので, 作成したばかりの `user_ua1`, `user_ua2` では `!` の後になんの文字列もありません。
+
+```text
+[...]
+encrypted password
+    Refer to crypt(3) for details on how this string is interpreted.
+    If the password field contains some string that is not a valid result of crypt(3), for instance ! or \*, the user will not be able to use a unix password to log in (but the user may log
+    in the system by other means).
+[...]
+    A password field which starts with an exclamation mark means that the password is locked. The remaining characters on the line represent the password field before the password was
+    locked.
+[...]
+```
+
+## adduser について
+
+- ユーザー追加コマンド
+  - デフォルト値 + オプションで指定した値を使ってユーザー追加
+- インタラクションあり
+  - デフォルトではパスワード, GECOS フィールド[^4]などを対話的に設定
+
+### man adduser(8)
+
+```text
+[...]
+DESCRIPTION
+    adduser and addgroup add users and groups to the system according to command line options and configuration information in /etc/adduser.conf. They are friendlier front ends to the low
+    level tools like useradd, groupadd and usermod programs, by default choosing Debian policy conformant UID and GID values, creating a home directory with skeletal configuration, running a
+    custom script, and other features. adduser and addgroup can be run in one of five modes:
+        Add a normal user
+[...]
+        Add a system user
+[...]
+        Add a user group
+[...]
+        Add a system group
+[...]
+        Add an existing user to an existing group
+[...]
+FILES
+    /etc/adduser.conf
+        Default configuration file for adduser and addgroup
+    /usr/local/sbin/adduser.local
+        Optional custom add-ons.
+[...]
+```
+
+こちらの man でも, 次のように `useradd` などよりユーザーフレンドリーですよ, という記述がありますね。
+
+> ...They are friendlier front ends to the low level tools like useradd, groupadd and usermod programs, ...
+
+### /etc/adduser.conf
+
+```text
+$ grep -E ^[^#] /etc/adduser.conf
+DSHELL=/bin/bash
+DHOME=/home
+GROUPHOMES=no
+LETTERHOMES=no
+SKEL=/etc/skel
+FIRST_SYSTEM_UID=100
+LAST_SYSTEM_UID=999
+FIRST_SYSTEM_GID=100
+LAST_SYSTEM_GID=999
+FIRST_UID=1000
+LAST_UID=59999
+FIRST_GID=1000
+LAST_GID=59999
+USERGROUPS=yes
+USERS_GID=100
+DIR_MODE=0755
+SETGID_HOME=no
+QUOTAUSER=""
+SKEL_IGNORE_REGEX="dpkg-(old|new|dist|save)"
+kangetsu@ubuntu18:~/useradd
+```
+
+パッと目に付く `useradd` との違いとして, `DSHELL=/bin/bash` があります。
+
+### /etc/skel/
+
+`useradd` と同じなので割愛します。
+
+### adduser 実行
+
+`adduser` を実行して, `user_au1` というユーザーを作ってみます (`useradd` と同じく初めはわざと権限問題で失敗してみています。エラーメッセージもより分かりやすくなっていますね)。
+
+```text
+$ adduser user_au1
+adduser: Only root may add a user or group to the system.
+kangetsu@ubuntu18:~/useradd
+$ sudo adduser user_au1
+Adding user `user_au1' ...
+Adding new group `user_au1' (1003) ...
+Adding new user `user_au1' (1003) with group `user_au1' ...
+Creating home directory `/home/user_au1' ...
+Copying files from `/etc/skel' ...
+Enter new UNIX password:
+Retype new UNIX password:
+passwd: password updated successfully
+Changing the user information for user_au1
+Enter the new value, or press ENTER for the default
+Full Name []:
+Room Number []:
+Work Phone []:
+Home Phone []:
+Other []:
+Is the information correct? [Y/n] y
+kangetsu@ubuntu18:~/useradd
+$ grep user_au1 /etc/passwd
+user_au1:x:1003:1003:,,,:/home/user_au1:/bin/bash
+kangetsu@ubuntu18:~/useradd
+```
+
+まず, `useradd` と比べてログメッセージが親切です。  
+読めば何をやっているかがわかる内容になっています。
+
+そして, `Enter new UNIX password:` でパスワードを, `Enter the new value, or press ENTER for the default` で GECOS フィールドとしてフルネーム, 部屋番号などが対話的に聞かれています。  
+この例では GECOS フィールドは全部未入力で Enter 連打したので, その下で `/etc/passwd` の GECOS フィールドが `,,,` となっています。  
+また, パスワードも既に入力済みなので, `useradd` と異なり, パスワードフィールドが `x` になっています (`/etc/shadow` の方に暗号化パスワードが記載されています)。
+
+#### adduser のインタラクション回避方法
+
+上ですでに述べたように, インタラクションの有無は `useradd` と `adduser` の大きな違いです。  
+そして, インタラクションの発生は自動化を妨げてしまいます。  
+そもそも, GECOS フィールドは不要なケースが多いでしょう。
+
+`adduser` では, **以下のオプションを組み合わせて指定することで, これらのインタラクションの回避が可能** となります。
+
+- `adduser --gecos ""` として GECOS に空値を指定すればパスワード以外はスキップできる[^5]
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ sudo adduser user_au2 --gecos ""
+Adding user `user_au2' ...
+Adding new group `user_au2' (1004) ...
+Adding new user `user_au2' (1004) with group `user_au2' ...
+Creating home directory `/home/user_au2' ...
+Copying files from `/etc/skel' ...
+Enter new UNIX password:
+Retype new UNIX password:
+passwd: password updated successfully
+kangetsu@ubuntu18:~/useradd
+```
+
+- `adduser --disabled-login`, `adduser --disabled-password` にすればログインはできないがパスワード設定もスキップできる(つまりパスワードに関して useradd と同じ状態になる)
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ sudo adduser user_au3 --gecos "" --disabled-login
+Adding user `user_au3' ...
+Adding new group `user_au3' (1006) ...
+Adding new user `user_au3' (1006) with group `user_au3' ...
+Creating home directory `/home/user_au3' ...
+Copying files from `/etc/skel' ...
+kangetsu@ubuntu18:~/useradd
+```
+
+```text
+kangetsu@ubuntu18:~/useradd
+$ sudo grep user_au3 /etc/shadow
+user_au3:!:18430:0:99999:7:::
+kangetsu@ubuntu18:~/useradd
+```
+
+まとめると, インタラクション回避だけなら以下のコマンドで可能です。
+
+`sudo adduser $LOGIN_NAME --gecos "" --disabled-login`
+
+## まとめ
+
+個人で利用する範囲では, コマンド一つで完結できる `adduser` で良いと思います。  
+一方で組織や中規模以上の環境で利用する場合, `useradd` でオプションを指定してやればそれで十分かと思いました。  
+例えば `useradd` はデフォルトのままだとログインシェルが Bourne Shell になるので, これを bash に変えるよう `-s /bin/bash` を付ける, などが多いでしょう。
+
+個々のオプションの設定も, 大抵スクリプト化したり, 手順書化したりするとは思うので, **「インタラクションが発生しない」「Debian 系以外でも使えるという移植性」**[^6]も利点になると思います。
+
+[^1]: 中島 能和; 濱野 賢一朗. Linux教科書 LPICレベル1 Version5.0対応 (Kindle の位置No.6388-6390). 株式会社 翔泳社. Kindle 版.
+[^2]: ここではユーザー作成機能に焦点を当てています
+[^3]: インタラクションありの場合も expect などを使えばできると思いますが, 少し手間です
+[^4]: GECOS はかつて General Electric 社が開発していた OS, General Electric Comprehensive Operating System を表しており, 当時はこのフィールドに GECOS へのログイン情報を記録していたこと由来するらしいです。今は単なるコメントフィールド
+[^5]: もちろん意味のある値を入れてもよい
+[^6]: システムリプレースで OS が変わっても手順書やスクリプトの更新が不要というのは強いです。ディストリビューションが変わるレベルでのシステムリプレースはそうないとは思いますが......

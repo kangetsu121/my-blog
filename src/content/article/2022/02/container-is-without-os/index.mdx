@@ -1,6 +1,6 @@
 ---
 title: '「コンテナには OS はない」ということについて'
-description: '「コンテナに OS はない」にピンときてなかったので調べてまとめました'
+description: '「コンテナには OS がない」とはどういう意味なのか、Linux カーネル、ディストリビューション、Docker の仕組みを整理しながら解説します。'
 publishedAt: '2022-02-11'
 updatedAt: '2022-02-11'
 tags: ['Docker']
@@ -220,10 +220,10 @@ root         704  0.6  0.4 1407488 38180 ?       Ssl  16:09   2:00 /usr/bin/cont
 root         721  0.0  0.0   6836  1756 ?        Ss+  16:09   0:00 /sbin/agetty -o -p -- \u --keep-baud 115200,38400,9600 ttyAMA0 vt220
 root         725  0.0  0.0   5312  1484 tty1     Ss+  16:09   0:00 /sbin/agetty -o -p -- \u --noclear tty1 linux
 root         728  0.0  0.0  12212  6404 ?        Ss   16:09   0:00 sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups
-root        1245  0.0  0.0  15336  7648 ?        Ss   16:09   0:00  \_ sshd: kangetsu [priv]
-kangetsu    1366  0.0  0.0  15352  4212 ?        S    16:09   0:01  |   \_ sshd: kangetsu@pts/0
-kangetsu    1367  0.0  0.0   9928  4880 pts/0    Ss   16:09   0:00  |       \_ -bash
-kangetsu   10428  0.1  0.5 1418496 45464 pts/0   Sl+  21:00   0:01  |           \_ docker run -it centos /bin/bash
+root        1245  0.0  0.0  15336  7648 ?        Ss   16:09   0:00  _ sshd: kangetsu [priv]
+kangetsu    1366  0.0  0.0  15352  4212 ?        S    16:09   0:01  |   _ sshd: kangetsu@pts/0
+kangetsu    1367  0.0  0.0   9928  4880 pts/0    Ss   16:09   0:00  |       _ -bash
+kangetsu   10428  0.1  0.5 1418496 45464 pts/0   Sl+  21:00   0:01  |           _ docker run -it centos /bin/bash
 [...]
 kangetsu@ubuntu20:~$ pstree
 systemd─┬─accounts-daemon───2*[{accounts-daemon}]

@@ -1,0 +1,91 @@
+---
+title: 'Microsoft Visual Studio Code の Remote Development で快適なリモート開発'
+description: 'Visual Studio Code の Remote Development を使い、SSH 接続先のファイルをローカルと同じ感覚で編集するための設定手順を紹介しました。'
+publishedAt: '2019-07-06'
+updatedAt: '2019-07-06'
+tags: ['VSCode']
+---
+
+## TL;DR
+
+- VSCode の Remote Development プラグインを利用するとリモートサーバーのフォルダ・ファイルをローカルの VSCode で編集できる
+- 手順は以下:
+  1. ローカルの VSCode を version 1.35.0 以上にする
+  2. VSCode の Remote Development プラグインをインストール
+  3. ローカルに `~/.ssh/config` ファイルを用意 ([前回の記事参照](/2019/06/ssh-public-key-authentication/))
+     - `config` に記載した秘密鍵のパーミッションに注意, `600` 相当にする
+  4. VSCode の Remote-SSH ペインを開くと `~/.ssh/config` に記載した接続先が表示されているのでつなぎたいものをクリック (表示されていない場合は `settings.json` の `remote.SSH.configFile` のパスを確認)
+- VSCode のプラグインはリモートサーバーごとにインストールが必要
+  (テーマ, UI 拡張などはローカルのものが使われるので不要)
+- いちいち scp, sftp したりしなくてよくなる！
+- もちろん VSCode のターミナル機能もリモート先でそのまま使える！
+
+## 1. VSCode Remote Development とは
+
+　みなさんは ssh 接続先のサーバーのファイルはどうやって編集しているでしょうか。わたしは残念ながらまだ vim にそんなに習熟していないので, 変更が多いものは scp, sftp などでファイルをローカルに転送し, エディタで編集し, また scp, sftp でリモートに送り返していました。  
+　確かにこれでもやりたいことは実現できるんですが, 手順に無駄が多いです。  
+　そこで, VSCode[^1]の拡張機能, Remote Development が非常に役に立ってくれます。
+
+### 1-1. 何ができる機能か
+
+　一言で言えば, **ssh 先のマシンのファイルを VSCode で編集できる機能** です。ssh 先のフォルダ・ファイルを, まるでローカルにあるかのように扱えます。
+
+### 1-2. いつから使えるのか
+
+　以前は VSCode Insiders という β 版的なものでしか使えなかったのですが, つい先日の 2019年5月末のアップデートで, VSCode stable 版でも利用可能となりました。
+
+## 2. 設定手順
+
+　利用開始までの手順は簡単です。ただし, はまりポイントがあるので注意が必要です。
+
+Remote Development 設定手順
+
+1. ローカルの VSCode を version 1.35.0 以上にする
+2. VSCode の Remote Development プラグインをインストール
+3. ローカルに ~/.ssh/config ファイルを用意 ([前回の記事参照](/2019/06/ssh-public-key-authentication/))
+4. VSCode の Remote-SSH ペインを開くと ~/.ssh/config に記載した接続先が表示されているのでつなぎたいものをクリック
+
+以上です, 難しい手順はありませんが順に見ていきます。
+
+### 2-1. VSCode を version 1.35.0 以上にする
+
+　VSCode stable 版では バージョン 1.35.0 以上から対応しているので, それより古いバージョンの場合はアップデートします。
+
+### 2-2. Remote Development プラグインをインストール
+
+　VSCode を起動して, 左のサイドメニューから "Extensions" をクリックして, 検索窓に **remote development** と打ち込みます。Remote Development が表示されたら, install します。  
+　なお, このとき一緒に Remote - SSH, Remote - WSL, Remote - Containers などもインストールされますが, これは Remote Development が拡張パックとしてこれらを包含しているためなので問題ありません。むしろこれらをアンインストールしないように注意してください。
+
+### 2-3. ~/.ssh/config ファイルを用意
+
+　Remote Development では ssh 接続に `~/.ssh/config` を利用します。  
+　このファイルの詳しい作成手順や仕組みは [前回の記事](/2019/06/ssh-public-key-authentication/) を参照してください。
+　ただし、**ここで注意が必要** です。
+
+　わたしがセットアップした際, Remote Development を実行しても, いつまでも接続待ちの状態となり接続できていませんでした。原因がわからず, 最終的に `settings.json`[^2] に `"remote.SSH.showLoginTerminal": true` を追記することで ssh 試行時のメッセージを確認し, 解決できました。  
+　なお, その時出ていたエラーメッセージは, **WARNING: UNPROTECTED PRIVATE KEY FILE!** というものでした。
+
+　結局原因としては, **秘密鍵のパーミッションが緩すぎるので危ないから使えません** ということでした。Windows では, **秘密鍵を右クリック > プロパティ > [セキュリティ] タブ > [編集]** で, ファイル所有者以外の権限をすべて削除し, 所有者のみ読み書き可能な権限にしたところ, 警告が出なくなり接続できました。
+　Mac や Linux だと `chmod 600 ${SECRET_KEY}` するだけなので楽ですね。
+
+### 2-4. Remote-SSH ペインを開いてつなぎたいものをクリック
+
+　これで準備が整いました。あとは, VSCode を開くと左側に **ディスプレイの上に `><`** を書いたようなアイコンがあるので, それをクリックします。  
+　クリック後, 開いたペインの **CONNECTIONS** という欄に, `~/.ssh/config` に記載した, 接続したい Host 名が表示されていれば, 後はそれを押すだけです！
+
+　もしも `CONNECTIONS` 欄に config で記載したはずの Host が表示されていない場合, `settings.json` の `"remote.SSH.configFile"` の値を見てみてください。VSCode は, ここに記載したパスにある config を見ていますので, 使いたい config ファイルのパスが記載されているか確認しましょう。
+
+## 3. 補足：プラグインの扱いなど
+
+　ところで, VSCode を使っている方なら気になることとして, プラグインなどの扱いはどうなるのか, という点があると思います。これについては, **リモート先ごとに必要なものをインストール** する必要があります。  
+　でも VSCode ならインストールにそんなに時間もかからないし, 大した手間にはならないでしょう。  
+　なお, テーマや UI 拡張は, リモート先でもローカルのものが使われるようです。
+
+　以上です。わたしは今 VirtualBox の Ubuntu で Django を触っているのですが, Remote Development のおかげで非常に楽です。アプリケーション開発ではプロジェクトに必要なフォルダ・ファイルが多くなりがちなので, そうした階層関係を左ペインですぐに確認でき, かつターミナル[^3]も VSCode の中でそのまま使えるので, 結構感動しました。  
+　本格的な IDE を使ってる方は必要ないかもしれませんが, ちょっとした conf の修正などにも使えるので, ぜひ一度試してみてください。これを機に VSCode にエディタを乗り換えるのも全然ありだと思います。
+
+公式ドキュメントは[こちら](https://code.visualstudio.com/api/advanced-topics/remote-extensions)です, より詳しく知りたい方はご確認ください。  
+
+[^1]: Microsoft Visual Studio Code。軽量で高機能なエディタ, 愛用者もかなり多い。わたしの PC では Atom を扱いきれるスペックではないため, 最近移行しました
+[^2]: VSCode の設定ファイルの一つ。Ctrl + , で設定画面を開き, 右上にある {} をクリックすると開ける
+[^3]: Ctrl + @ で出てくるあれです。便利

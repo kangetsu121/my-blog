@@ -1,0 +1,423 @@
+---
+title: 'Ubuntu (Debian 系) パッケージ管理: apt 系コマンドの使い分け'
+description: 'Ubuntu・Debian 系のパッケージ管理で使う apt、apt-get、apt-cache の役割や違いを、更新や検索などの操作ごとに比較します。'
+publishedAt: '2020-11-22'
+updatedAt: '2020-11-22'
+tags: ['Linux']
+---
+
+## 本記事の目的
+
+業務や勉強用の環境で Ubuntu を使っているのですが, 触り始めた当初混乱させられたのが「パッケージ管理」という概念と, 同じ目的で複数存在するコマンド体系でした。  
+私が調べた当時は, 「`apt-get` を使うのが普通」「`apt-get` はもう古いので `aptitude` を使う」「(`aptitude` などなかったかのように) `apt-get` は古い, これからは `apt` の利用を公式も推奨する」など, 様々な記述があったように思います。
+
+その後なんとなくでコマンドを使い続けてきたので, 改めてドキュメントなどを読んで自分の中で整理しました。
+
+なお, パッケージ管理の基礎については改めて記事を書く予定です (初めはこの記事に含めようとしたが, 長くなったのと目的がぼやけたので分けることにした)。
+
+## TL;DR
+
+- `apt` はあくまでエンドユーザーツール, バックエンドの `apt-get` や `apt-cache` とできることは同じ
+- パッケージインストールやアップグレード: `apt` vs `apt-get`
+  - 安定した互換性, 自動化のしやすさからサーバ運用などでは `apt-get` を使いたい
+  - 個人利用なら `apt` は便利
+- パッケージ検索: `apt` vs `apt-cache`
+  - `apt-get` と同じく, より安定しているのは `apt-cache`
+  - ただしパッケージ検索などはインタラクティブに使うシーンがほとんどだと思うので便利な `apt` でよい
+- `aptitude` や `synaptic` はデフォルトインストールもされていないので考慮しない
+- 結論: サーバ運用スクリプトなどでは基本的に `apt-get`/`apt-cache`, 個人利用なら `apt` を使うと便利
+
+## 前提
+
+### 環境情報
+
+```text
+kangetsu@ubuntu18:~
+$ lsb_release -d
+Description: Ubuntu 18.04.5 LTS
+kangetsu@ubuntu18:~
+$ uname -a
+Linux ubuntu18 4.15.0-123-generic #126-Ubuntu SMP Wed Oct 21 09:40:11 UTC 2020 x86_64 x86_64 x86_64 GNU/Linux
+kangetsu@ubuntu18:~
+```
+
+### 比較対象
+
+パッケージ管理ツールはいろいろ存在するのですが, ここでは `apt` と `apt-get`, 検索コマンドとして `apt-cache` を取り上げます。  
+公式ドキュメントを読んでいると `aptitude` や `synaptic` なども登場するのですが, これらは上述の Ubuntu 18.04 の環境でデフォルトでインストールされていないので取り上げません[^1]。
+
+```text
+kangetsu@ubuntu18:~
+$ aptitude -h
+Command 'aptitude' not found, but can be installed with:
+sudo apt install aptitude
+kangetsu@ubuntu18:~
+```
+
+```text
+kangetsu@ubuntu18:~
+$ synaptic -h
+Command 'synaptic' not found, but can be installed with:
+sudo apt install synaptic
+kangetsu@ubuntu18:~
+```
+
+## apt について
+
+`apt` の特徴について, `man 8 apt` の記述を引用します。
+
+> apt provides a high-level commandline interface for the package management system. It is intended as an end user interface and enables some options better suited for interactive usage by default compared to more specialized APT tools like apt-get(8) and apt-cache(8).
+
+「エンドユーザーインターフェースとして作られており, インタラクティブな用途でより使いやすいオプションを提供」といったことが書かれています。
+
+そして, 核心的な内容が, `SCRIPT USAGE AND DIFFERENCES FROM OTHER APT TOOLS` 部に記述されています。
+
+> The apt(8) commandline is designed as an end-user tool and it may change behavior between versions. While it tries not to break backward compatibility this is not guaranteed either if a change seems beneficial for interactive use.
+>
+> All features of apt(8) are available in dedicated APT tools like apt-get(8) and apt-cache(8) as well. apt(8) just changes the default value of some options (see apt.conf(5) and specifically the Binary scope). So you should prefer using these commands (potentially with some additional options enabled) in your scripts as they keep backward compatibility as much as possible.
+
+- `apt` はエンドユーザーツールであり, バージョンが変わると挙動が変わる場合がある
+- 後方互換性の維持に努めるが, 保証はしない
+- `apt` ができることは `apt-get`, `apt-cache` でもできる
+  - `apt` はいくつかのオプションのデフォルト値を変えているだけ
+- 後方互換性をできる限り維持したい場合は, `apt-get` や `apt-cache` を使える
+
+ほぼ結論は見えたようです。  
+これを頭に入れて, `apt` と `apt-get`, `apt-cache` を比較します。
+
+### パッケージ更新: apt vs apt-get
+
+`APT` 系のツールは, `--simulate` オプションをつけることで, 一部コマンドで実行のシミュレーションができます[^2]。  
+これを使って, `apt` と `apt-get` の挙動の違いの例を見てみます。
+
+- **`apt upgrade`**
+
+```text
+$ sudo apt upgrade --simulate
+Reading package lists... Done
+Building dependency tree
+Reading state information... Done
+Calculating upgrade... Done
+The following NEW packages will be installed:
+linux-headers-4.15.0-124 linux-headers-4.15.0-124-generic linux-image-4.15.0-124-generic linux-modules-4.15.0-124-generic
+linux-modules-extra-4.15.0-124-generic motd-news-config
+The following packages will be upgraded:
+base-files linux-generic linux-headers-generic linux-image-generic ubuntu-server
+5 upgraded, 6 newly installed, 0 to remove and 0 not upgraded.
+Inst ubuntu-server [1.417.4] (1.417.5 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst base-files [10.1ubuntu2.9] (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Conf base-files (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Inst linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-image-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all]) []
+Inst linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf ubuntu-server (1.417.5 Ubuntu:18.04/bionic-updates [amd64])
+Conf motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Conf linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all])
+Conf linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+kangetsu@ubuntu18:~
+```
+
+- **`apt-get upgrade`**
+
+```text
+kangetsu@ubuntu18:~
+$ sudo apt-get upgrade --simulate
+Reading package lists... Done
+Building dependency tree
+Reading state information... Done
+Calculating upgrade... Done
+The following packages have been kept back:
+base-files linux-generic linux-headers-generic linux-image-generic ubuntu-server
+0 upgraded, 0 newly installed, 0 to remove and 5 not upgraded.
+kangetsu@ubuntu18:~
+```
+
+5種の upgrade, 6種の install が行われる `apt upgrade` に比べ, `apt-get upgrade` では何も起きませんでした。  
+今の私の環境で, `apt upgrade` の方でインストールしようとしているものは, linux kernel パッケージのようです。
+
+これらが `apt-get` ではインストールできないかというと, もちろんそんなことはなく, `apt-get dist-upgrade` でインストール可能です。  
+以下でその結果と, `apt upgrade` との diff を見てみます。
+
+- **`apt-get dist-upgrade`**
+
+```text
+kangetsu@ubuntu18:~
+$ sudo apt-get dist-upgrade --simulate
+Reading package lists... Done
+Building dependency tree
+Reading state information... Done
+Calculating upgrade... Done
+The following NEW packages will be installed:
+linux-headers-4.15.0-124 linux-headers-4.15.0-124-generic linux-image-4.15.0-124-generic linux-modules-4.15.0-124-generic
+linux-modules-extra-4.15.0-124-generic motd-news-config
+The following packages will be upgraded:
+base-files linux-generic linux-headers-generic linux-image-generic ubuntu-server
+5 upgraded, 6 newly installed, 0 to remove and 0 not upgraded.
+Inst ubuntu-server [1.417.4] (1.417.5 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst base-files [10.1ubuntu2.9] (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Conf base-files (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Inst linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-image-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all]) []
+Inst linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf ubuntu-server (1.417.5 Ubuntu:18.04/bionic-updates [amd64])
+Conf motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Conf linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all])
+Conf linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+kangetsu@ubuntu18:~
+```
+
+- **`apt upgrade --simulate` と `apt-get dist-upgrade --simulate` 実行結果の diff**
+
+```text
+kangetsu@ubuntu18:~
+$ diff <(sudo apt upgrade --simulate) <(sudo apt-get dist-upgrade --simulate)
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+kangetsu@ubuntu18:~
+```
+
+この通り, 少なくともこの記事執筆時点の私の環境では, `apt upgrade` と `apt-get dist-upgrade` の差分はありませんでした。
+
+次に, `apt` で残る upgrade 系のサブコマンド, `full-upgrade` を試してみます。
+
+- **`apt full-upgrade`**
+
+```text
+kangetsu@ubuntu18:~
+$ sudo apt full-upgrade --simulate
+Reading package lists... Done
+Building dependency tree
+Reading state information... Done
+Calculating upgrade... Done
+The following NEW packages will be installed:
+linux-headers-4.15.0-124 linux-headers-4.15.0-124-generic linux-image-4.15.0-124-generic linux-modules-4.15.0-124-generic
+linux-modules-extra-4.15.0-124-generic motd-news-config
+The following packages will be upgraded:
+base-files linux-generic linux-headers-generic linux-image-generic ubuntu-server
+5 upgraded, 6 newly installed, 0 to remove and 0 not upgraded.
+Inst ubuntu-server [1.417.4] (1.417.5 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst base-files [10.1ubuntu2.9] (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Conf base-files (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Inst linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Inst linux-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-image-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all]) []
+Inst linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64]) []
+Inst linux-headers-generic [4.15.0.123.110] (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf ubuntu-server (1.417.5 Ubuntu:18.04/bionic-updates [amd64])
+Conf motd-news-config (10.1ubuntu2.10 Ubuntu:18.04/bionic-updates [all])
+Conf linux-modules-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-modules-extra-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-image-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-4.15.0-124 (4.15.0-124.127 Ubuntu:18.04/bionic-updates [all])
+Conf linux-headers-4.15.0-124-generic (4.15.0-124.127 Ubuntu:18.04/bionic-updates [amd64])
+Conf linux-headers-generic (4.15.0.124.111 Ubuntu:18.04/bionic-updates [amd64])
+kangetsu@ubuntu18:~
+```
+
+`apt upgrade` と差分がなさそうです。
+
+- **`apt upgrade` と `apt full-upgrade` 実行結果の diff**
+
+```text
+kangetsu@ubuntu18:~
+$ diff <(sudo apt upgrade --simulate) <(sudo apt full-upgrade --simulate)
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+kangetsu@ubuntu18:~
+```
+
+この通り, 実際に差分がありませんでした。  
+`apt full-upgrade` は `apt upgrade` がパッケージの upgrade, install を行うのに加え, 「パッケージの削除」も行うサブコマンドですが, 記事執筆時点の私の環境では upgrade に際して削除すべきパッケージがなかったためで, 同じ機能というわけではもちろんありません。
+
+ということで, 少なくともこの実験環境において upgrade 系のコマンドでは, `apt` にできて `apt-get` でできないことは検出されませんでした。  
+本当はもっと差が出そうな状態にしていろいろ実験するのがよいのですが, この記事を書くまでに回り道しすぎて力尽きたので, 別の機会があればそのときに。
+
+ちなみに, `man 8 apt` の引用をしたときに「後方互換性の保証はされない」といった記述を見ましたが, 上の実行結果でも `WARNING: apt does not have a stable CLI interface. Use with caution in scripts.` と出ているのが見て取れます。
+
+### パッケージ検索: apt vs apt-cache
+
+続いてパッケージ検索機能, `apt search` と `apt-cache search` の比較をしてみます。
+
+- **`apt search`**
+
+```text
+kangetsu@ubuntu18:~
+$ apt search elasticsearch
+Sorting... Done
+Full Text Search... Done
+elastalert/bionic 0.1.28-1 all
+easy and flexible alerting with Elasticsearch
+elastalert-doc/bionic 0.1.28-1 all
+easy and flexible alerting with Elasticsearch (documentation)
+elasticsearch-curator/bionic 5.2.0-1 all
+command-line tool for managing Elasticsearch time-series indices
+golang-gopkg-olivere-elastic.v2-dev/bionic 2.0.12-1 all
+Elasticsearch client for Golang
+golang-gopkg-olivere-elastic.v3-dev/bionic 3.0.41-1 all
+Elasticsearch client for Golang
+libcatmandu-perl/bionic 1.0700-1 all
+metadata toolkit
+libcatmandu-store-elasticsearch-perl/bionic 0.0509-1 all
+searchable store backed by Elasticsearch
+libsearch-elasticsearch-perl/bionic 5.01-1 all
+Perl client for Elasticsearch
+php-horde-elasticsearch/bionic 1.0.4-1 all
+Horde ElasticSearch client
+python-django-haystack/bionic 2.8.0-1 all
+modular search for Django
+python-django-haystack-doc/bionic 2.8.0-1 all
+modular search for Django (Documentation)
+python-elasticsearch/bionic 5.4.0-1 all
+Python client for Elasticsearch
+python-elasticsearch-curator/bionic 5.2.0-1 all
+Python library for managing Elasticsearch time-series indices
+python-elasticsearch-curator-doc/bionic 5.2.0-1 all
+Python library for managing Elasticsearch time-series indices (documentation)
+python-elasticsearch-doc/bionic 5.4.0-1 all
+Python client for Elasticsearch (Documentation)
+python3-django-haystack/bionic 2.8.0-1 all
+modular search for Django (Python3 version)
+python3-elasticsearch/bionic 5.4.0-1 all
+Python client for Elasticsearch (Python3 version)
+python3-elasticsearch-curator/bionic 5.2.0-1 all
+Python 3 library for managing Elasticsearch time-series indices
+rsyslog-elasticsearch/bionic 8.32.0-1ubuntu4 amd64
+Elasticsearch output plugin for rsyslog
+ruby-elasticsearch/bionic 1.0.12-1 all
+Ruby client for connecting to an Elasticsearch cluster
+ruby-elasticsearch-api/bionic 1.0.12-1 all
+Ruby implementation of the Elasticsearch REST API
+ruby-elasticsearch-transport/bionic 1.0.12-1 all
+low-level Ruby client for connecting to Elasticsearch
+kangetsu@ubuntu18:~
+```
+
+- **`apt-cache search`**
+
+```text
+kangetsu@ubuntu18:~
+$ apt-cache search elasticsearch
+elastalert - easy and flexible alerting with Elasticsearch
+elastalert-doc - easy and flexible alerting with Elasticsearch (documentation)
+elasticsearch-curator - command-line tool for managing Elasticsearch time-series indices
+golang-gopkg-olivere-elastic.v2-dev - Elasticsearch client for Golang
+golang-gopkg-olivere-elastic.v3-dev - Elasticsearch client for Golang
+libcatmandu-perl - metadata toolkit
+libcatmandu-store-elasticsearch-perl - searchable store backed by Elasticsearch
+libsearch-elasticsearch-perl - Perl client for Elasticsearch
+php-horde-elasticsearch - Horde ElasticSearch client
+python-django-haystack - modular search for Django
+python-django-haystack-doc - modular search for Django (Documentation)
+python-elasticsearch - Python client for Elasticsearch
+python-elasticsearch-curator - Python library for managing Elasticsearch time-series indices
+python-elasticsearch-curator-doc - Python library for managing Elasticsearch time-series indices (documentation)
+python-elasticsearch-doc - Python client for Elasticsearch (Documentation)
+python3-django-haystack - modular search for Django (Python3 version)
+python3-elasticsearch - Python client for Elasticsearch (Python3 version)
+python3-elasticsearch-curator - Python 3 library for managing Elasticsearch time-series indices
+rsyslog-elasticsearch - Elasticsearch output plugin for rsyslog
+ruby-elasticsearch - Ruby client for connecting to an Elasticsearch cluster
+ruby-elasticsearch-api - Ruby implementation of the Elasticsearch REST API
+ruby-elasticsearch-transport - low-level Ruby client for connecting to Elasticsearch
+kangetsu@ubuntu18:~
+```
+
+diff をとるまでもなく, 見た目には差分があります。  
+`apt` のほうが情報量がわずかに多く, リーダビリティに配慮してくれています。
+
+念のため, `apt` と `apt-cache` で検索結果に差がないかを見ておきます。  
+パッケージ名だけ取れれば十分なので, `awk` でちょっと加工します。
+
+- **`apt search` と `apt-cache search` で検索できたパッケージの diff**
+
+```text
+kangetsu@ubuntu18:~
+$ diff <(apt search elasticsearch | awk -F '/' '/\// {print $1}') <(apt-cache search elasticsearch | awk -F ' - ' '{print $1}')
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+kangetsu@ubuntu18:~
+```
+
+同じ index を使っているので当然かもしれませんが, 差分はありませんでした。
+
+### apt がどう便利か
+
+ここまで, `apt` は不安定, `apt-get` や `apt-cache` と機能的な差はない, という, `apt` にネガティブな結果ばかり書いてきました。  
+しかし, 公式が `apt` を推しているように, `apt` はインタラクティブに使う分には便利です。  
+上記の `apt search` の結果のように, よりユーザーに優しい表示をしてくれたり, 他にも便利な機能があります。
+
+例えば, 個人的に時々使うのが, `apt list --upgradable` です。  
+これは, `apt-get [dist-]upgrade --simulate` と類似した結果ではありますが, よりリーダブルに, アップグレード可能なパッケージを一覧してくれる機能です。
+
+```text
+$ apt list --upgradable
+Listing... Done
+base-files/bionic-updates 10.1ubuntu2.10 amd64 [upgradable from: 10.1ubuntu2.9]
+linux-generic/bionic-updates 4.15.0.124.111 amd64 [upgradable from: 4.15.0.123.110]
+linux-headers-generic/bionic-updates 4.15.0.124.111 amd64 [upgradable from: 4.15.0.123.110]
+linux-image-generic/bionic-updates 4.15.0.124.111 amd64 [upgradable from: 4.15.0.123.110]
+ubuntu-server/bionic-updates 1.417.5 amd64 [upgradable from: 1.417.4]
+kangetsu@ubuntu18:~
+```
+
+ここでは新規インストールされるパッケージは表示されないため, `apt upgrade --simulate` とは異なる結果ではありますが, このようにインストール済みでかつアップグレード可能なパッケージを現状のバージョンとともに示してくれます。  
+(タイプ数も少ないし) このようにいろいろと痒い所に手が届くようなコマンドを備えてくれているので, デスクトップなど個人利用では便利に使っていけるものかと思います。
+
+## まとめ
+
+以上, 代表的なコマンドを `apt` と `apt-get`, `apt` と `apt-cache` で比較しましたが, 結果そのものには差はない, という結論にはなりました。  
+ただし繰り返しますが, この結果は私の実験条件で得られたものなので, もう少し条件を整えれば違いが出る可能性はあります。
+
+しかし, `man 8 apt` を信じるならば, `apt` にできて `apt-get`, `apt-cache` にできないことはないはずなので, 基本どちらかのみを使えば問題ありません。
+
+公式で謳っているように, `apt` はよりユーザーフレンドリーな UI で便利ですが, 互換性の維持は保証されず, 破壊的な変更が加わる可能性が高いので, サーバ運用で用いるスクリプトなどでは, 安定した `apt-get`, `apt-cache` を使うのがよいでしょう。  
+このことは, `apt` をワンライナーで用いようとしたときなどに現れる `apt does not have a stable CLI interface. Use with caution in scripts.` という `WARNING` も示しています。
+
+ただし, もちろん `apt` は便利です。
+
+`apt list --upgradable` や, `apt search` の結果が見やすかったりと, スクリプトで用いるのでなければ, 積極的に使ってよいものだと思います。
+
+結論としては, **サーバ運用スクリプトなど, 安定性が重要な用途では `apt-get` `apt-cache` を, 普段使いなどのインタラクティブな場面では `apt` を使うと便利** となりました。  
+かつ, **検索はインタラクティブな場面が多いので, `apt` でよさそう** と言えそうです。
+
+`apt-get`, `apt-cache` などのサブコマンドやオプションの解説は別の記事を書こうと思うので, 興味があればそちらもご覧ください。
+
+## おまけ
+
+`apt` には, `/etc/apt/sources.list` を編集するための `apt edit-sources` なんてコマンドもありました。  
+バリデーションでもかけてくれるのかな, と思ったけどそんなことはなかった。  
+一応 `man 8 apt` に基本的な sanity check はすると書いてあるのでよほどおかしいのは弾いてくれるのだろうけど。  
+work-in-progress とあるので今後に期待だろうか。
+
+`/etc/apt/sources.list.d` 以下のドロップインファイルの編集はできなさそうなのでわざわざ使うことはなさそう。
+
+[^1]: デフォルトでインストールされていないものをパッケージ管理という基本的な目的で使うのは運用面で不安定なので, そのリスクをわざわざ冒すことはないだろうと考えたため。個人で使う分にはよいと思います
+[^2]: 同じ効果を持つオプションとして, -s, --just-print, --dry-run, --recon, --no-act がある

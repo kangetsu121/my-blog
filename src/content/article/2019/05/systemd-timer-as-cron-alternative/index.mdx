@@ -1,0 +1,203 @@
+---
+title: 'systemd.timer の覚書 - cron を置き換え得るもの'
+description: 'Linux の定期実行で使われる systemd.timer の仕組みを確認し、cron との違いや、それぞれのメリット・デメリットを整理しました。'
+publishedAt: '2019-05-26'
+updatedAt: '2019-05-26'
+tags: ['Linux']
+---
+
+## TL;DR
+
+- 最近の Linux では cron じゃなくて systemd.timer を使ったスケジューラーが多い
+- 自分の環境の timer とそれが指定している service Unit を見てみた
+- ArchWiki を参考に, cron と systemd.timer のメリット・デメリットを比較
+  - 依存の組みやすさやデバッグしやすさでは systemd.timer 有利
+  - 一時的な処理を書きたいときのお手軽さは cron に軍配
+
+## 1. 背景
+
+　縁あって今年の一月に技術職 (インフラ系の QA 職) に転職したのですが, 前職では Web アプリの保守コンサルタントをやっていました。その頃の業務の大半は製品機能の質疑応答と, 資料作成をして定例会でお客様に説明, という日々だったと記憶しています。  
+　当時もサーバーを触る機会はあったんですが, 半分以上は Windows Server だったこと, 製品インストールやバージョンアップが主で, サーバー操作にあまり詳しくなくてもできること, そしてなんといっても結局はお客様対応がメインなことから, あまり体系立ててインフラ周りの勉強をする機会はありませんでした。  
+　現在は職種が変わり, お客様先に出ることはなく, 毎日コマンドラインと触れ合っているので, 技術周りをちゃんと勉強していきたいと思っています。[^1]
+
+　無駄に完璧主義なのか, せっかく勉強しようと始めたこのブログにもなかなか記事の投稿ができていないので, 今回はそんな心理ハードルを無視して, 前職で触っていたサーバーと, 現在触っているサーバーで気づいた違いの一つ, **cron でなく systemd.timer を利用していること** について記録します。  
+　なお, ここで利用している OS のバージョン情報は次の通りです。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 21:40:49]
+$ uname -a
+Linux ubuntu16 4.4.0-148-generic #174-Ubuntu SMP Tue May 7 12:20:14 UTC 2019 x86_64 x86_64 x86_64 GNU/Linux
+[kangetsu@ubuntu16 ~ Sun May 26 22:25:59]
+```
+
+
+## 2. cron がない？
+
+　背景で触れたように, 今まで触ってた環境ではスケジュールされた処理の管理に cron を使っていました。`crontab -u ${USER} -l` で cron を確認したり, `crontab -u ${USER} -e` で編集したり。[^2]  
+　同じように, 現職でもサーバーで cron を確認してみようと思ったら, 何もない。自宅の VirtualBox の Ubunutu も見てみたら, 同じように何もない。ところが, 職場環境では 定期実行 Job は走ってるし, 自宅の仮想環境もどうやらパッケージの更新確認 Job が走ってる様子。どういうことかと調べたら, どうやら **systemd.timer** というもので cron の代替ができるらしい, とわかりました。[^3]
+
+## 3. cron の代替: systemd.timer
+
+### cron の確認
+
+　まず, 自宅仮想環境で `/var/spool/cron` がどうなっているか確認してみます。cron を使っていた環境ではここにユーザー名のファイルがあり, その中に cron が記述されていました。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 18:10:43]
+$ sudo ls -lR /var/spool/cron/
+/var/spool/cron/:
+total 12
+drwxrwx--T 2 daemon daemon 4096 Mar 4 01:27 atjobs
+drwxrwx--T 2 daemon daemon 4096 Jan 15 2016 atspool
+drwx-wx--T 2 root crontab 4096 May 26 17:41 crontabs
+/var/spool/cron/atjobs:
+total 0
+/var/spool/cron/atspool:
+total 0
+/var/spool/cron/crontabs:
+total 0
+[kangetsu@ubuntu16 ~ Sun May 26 18:10:52]
+```
+
+何もない。スティッキービットが設定されてるディレクトリが 3つありますが, いずれも空です。
+
+### systemd.timer の確認
+
+　では続いて, systemd.timer の確認をしてみます。load されてかつ active な systemd.timer は, `systemctl -t timer` で表示できます。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 19:36:33]
+$ systemctl -t timer
+UNIT LOAD ACTIVE SUB DESCRIPTION
+apt-daily-upgrade.timer loaded active waiting Daily apt upgrade and clean activities
+apt-daily.timer loaded active waiting Daily apt download activities
+systemd-tmpfiles-clean.timer loaded active waiting Daily Cleanup of Temporary Directories
+LOAD = Reflects whether the unit definition was properly loaded.
+ACTIVE = The high-level unit activation state, i.e. generalization of SUB.
+SUB = The low-level unit activation state, values depend on unit type.
+3 loaded units listed. Pass --all to see loaded but inactive units, too.
+To show all installed unit files use 'systemctl list-unit-files'.
+[kangetsu@ubuntu16 ~ Sun May 26 19:36:38]
+```
+
+何もしてないけどデフォルトで 3つの timer が有効になっています。  
+DESCRIPTION を見ると, それぞれ `apt update` するもの, `apt upgrade` するもの, tmp フォルダ内の？　一時ファイルを削除するもののように見えます。  
+具体的に何をやってるものか確かめるために, まずは `systemctl list-timers` でもう少し情報を表示します。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 19:36:38]
+$ systemctl list-timers
+NEXT LEFT LAST PASSED UNIT ACTIVATES
+Mon 2019-05-27 03:47:33 JST 7h left Sun 2019-05-26 16:36:06 JST 3h 32min ago apt-daily.timer apt-daily.service
+Mon 2019-05-27 06:09:22 JST 10h left Sun 2019-05-26 16:36:06 JST 3h 32min ago apt-daily-upgrade.timer apt-daily-upgrade.service
+Mon 2019-05-27 13:57:15 JST 17h left Fri 2019-05-24 00:38:17 JST 2 days ago systemd-tmpfiles-clean.timer systemd-tmpfiles-clean.service
+3 timers listed.
+Pass --all to see loaded but inactive timers, too.
+[kangetsu@ubuntu16 ~ Sun May 26 20:08:59]
+```
+
+実行スケジュールと, どの service を実行しているか (ACTIVATES) もわかりました。  
+試しに, `apt-daily.service` の status を見ます。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 20:08:59]
+$ systemctl status apt-daily.service
+● apt-daily.service - Daily apt download activities
+Loaded: loaded (/lib/systemd/system/apt-daily.service; static; vendor preset: enabled)
+Active: inactive (dead) since Sun 2019-05-26 16:36:43 JST; 3h 40min ago
+Docs: man:apt(8)
+Process: 1824 ExecStart=/usr/lib/apt/apt.systemd.daily update (code=exited, status=0/SUCCESS)
+Main PID: 1824 (code=exited, status=0/SUCCESS)
+May 26 16:36:06 ubuntu16 systemd[1]: Starting Daily apt download activities...
+May 26 16:36:43 ubuntu16 systemd[1]: Started Daily apt download activities.
+[kangetsu@ubuntu16 ~ Sun May 26 20:17:43]
+```
+
+今は timer で指定された時間ではないので, load されてるけど確かに inactive ですね。  
+では, いよいよ何をやっているものか確かめるために, load された Unit ファイル, `/lib/systemd/system/apt-daily.service` の中身を見ます。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 20:40:40]
+$ cat /lib/systemd/system/apt-daily.service
+[Unit]
+Description=Daily apt download activities
+Documentation=man:apt(8)
+ConditionACPower=true
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/apt/apt.systemd.daily update
+[kangetsu@ubuntu16 ~ Sun May 26 20:42:38]
+```
+
+う, もう一段階ありました。たらいまわし感がありますが, `ExecStart` で指定されている実行ファイル, `/usr/lib/apt/apt.systemd.daily` を見ます。
+
+......すると, 514 行のシェルスクリプトが表示されます。
+
+名前や Unit ファイルの Description などから想像はつくので真面目に読み解くまではしませんが, main 処理を追うとパッケージの update, upgrade などの処理が書かれていることが分かります。  
+`apt-daily.service` の `ExecStart` をよく見ると, 引数として `update` を渡してますね。  
+`apt-daily-upgrade.service` の Unit ファイルでは, 同じく `apt-daily.service` を指定してますが, 引数には `install` を渡しています。
+
+timer で何の処理を定期実行しているかは分かったので, 少し戻って, `apt-update.timer` 自体には何が記述されているのか見てみましょう。
+
+```text
+[kangetsu@ubuntu16 ~ Sun May 26 21:40:40]
+$ cat /lib/systemd/system/apt-daily.timer
+[Unit]
+Description=Daily apt download activities
+[Timer]
+OnCalendar=\*-\*-\* 6,18:00
+RandomizedDelaySec=12h
+Persistent=true
+[Install]
+WantedBy=timers.target
+[kangetsu@ubuntu16 ~ Sun May 26 21:40:49]
+```
+
+[ArchWiki](https://wiki.archlinux.jp/index.php/Systemd/%E3%82%BF%E3%82%A4%E3%83%9E%E3%83%BC)[^4] を参考に, `[Timer]` 部を読み解いてみます。
+
+- `OnCalender`:
+  `DayOfWeek Year-Month-Day Hour:Minute:Second` の書式で実行日時を指定しています。`,` 区切りで複数の値を指定, `*` はワイルドカードなので, この例では **毎日 6:00, 18:00 に実行** となります。
+- `RandomizedDelaySec`:
+  同じ時刻の起動を指定したタイマーが複数あるとリソースの奪い合いになりパフォーマンス低下につながるので, 指定した時間までを範囲としてランダムに起動を遅延させます。この例では, **6:00, 18:00 + 12時間** を最大として, 揺らぎを持たせています。(こんなに幅いる？)
+- `Persistent`:
+  `true` のとき, 電源停止中などの理由で実行予定時刻を過ぎていた場合, 次の起動時にすぐに実行されます。このため, わたしの VM 環境では大体毎回起動するとこの処理が走ってるようです。
+
+なるほど, 確かに cron のように, systemd.timer を使って定期実行処理を記述できることが分かりました。  
+そして, systemd.timer は少なくとも基本的には, **いずれかの systemd.service Unit と紐づき, service Unit を指定してその実行を指示している** ようです。  
+この辺を踏まえて, ArchWiki にある cron と比較した際のメリット・デメリットを引用してみましょう。[^5]
+
+> #### メリット
+>
+> タイマーを使う主要なメリットは、それぞれのジョブが固有の systemd サービスを使うというところに根ざします。そのメリットには以下のようなものがあります:
+>
+> - タイマーとは別個にジョブを実行することが簡単にできます。これによってデバッグが楽になります
+> - 特定の環境で動作するようにジョブを設定することができます (systemd.exec(5) man ページを参照)。
+> - ジョブを cgroups の支配下に置けます。- 他の systemd ユニットに依存するようにジョブを設定できます
+> - systemd の journal でジョブが記録されるのでデバッグが簡単です。
+>
+> #### 注意事項
+>
+> cron では簡単にできることが、タイマーユニットを使用する場合、難しかったり不可能であったりすることがいくつか存在します。
+>
+> - 冗長性: systemd を使って定期的なジョブを設定するには2つのファイルを作成して2回 systemctl コマンドを実行します。それに対して crontab には一行を追加するだけです
+> - メール: ジョブが失敗した時にメールを送信する cron の MAILTO と同等なものは存在しません。ただし各サービスに OnFailure= オプションを使うことで同じような機能を設定することはできます。
+
+メリットとしては, systemd の仕組みを使っているので, 依存を組みやすいとか, `journalctl` コマンドを使ってログを見やすい・デバッグしやすいなんかがありそうですね。  
+一方でデメリットとしては, 一つの Job に systemd.timer, systemd.service と 2つのファイルの作成と 2回の `systemctl` コマンドの実行が必要という冗長性が大きそうです。  
+手間なだけで, 大したデメリットではないかもしれませんが, ちょっと確認用の Job を作りたいときなんか, cron だと一行のスクリプトなどで済んでいたのでお手軽さは違いますね。
+
+## 4. まとめ
+
+　本当に勉強中のメモ書きっぽくなってしまいました。。  
+結論, と呼ぶほどのものでもないですが, まとめとしては, cron もまだまだ使えるけど, 保守性・リソース管理の観点からは systemd.timer がよさそうかも, という感想です。
+デバッグ・ログ管理がしやすいのはよさそうですね。  
+自分もこれからたびたびお世話になるかと思いますが, より詳しく知りたい入門者の方はまずは ArchWiki から読んでみると, ハードルも低くて勉強しやすいんじゃないかなと思います。
+他にお勧めあればぜひ教えていただければ嬉しいです。
+
+[^1]: でも前職にいる頃から技術系に興味はあったので, Python など自習してツール, LINE Bot 作るなどはしてましたし, その過程で勉強することもたくさんありました
+[^2]: 余談ですが, crontab -r で cron が消えてしまうので, cron の確認の際はわたしはあまり crontab -l は使わず, `/var/spool/cron/${USER}` を参照していました。crontab -r は警告も確認もしないで消えてゆくから typo したら...... (-i オプションで確認は取れるけどデフォルトじゃつかない)
+[^3]: 職場の人に聞けばいいじゃないか, と自分でも思いましたが, 現時点で自分の業務に直結しないので遠慮したのと, ある程度自分で調べようという心理が働いたようです
+[^4]: Arch Linux というディストリビューションの wiki ですが, Linux に共通する部分の解説も多くとても参考になります
+[^5]: https://wiki.archlinux.jp/index.php/Systemd/%E3%82%BF%E3%82%A4%E3%83%9E%E3%83%BC cron を置き換える

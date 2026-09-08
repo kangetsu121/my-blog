@@ -1,0 +1,311 @@
+---
+title: '補足記事: 「OpenSSH 公式による scp 非推奨宣言を受け, scp, sftp, rsync を比較してみた」の再検証 (2020/05/27 キャッシュクリア方法を変えて更新)'
+description: 'scp、sftp、rsync の転送速度比較を、キャッシュの影響を考慮した条件で再検証し、以前の計測結果を補足・修正します。'
+publishedAt: '2020-05-26'
+updatedAt: '2020-05-27'
+tags: ['Linux', 'パフォーマンス']
+---
+
+**2020/05/27 更新**
+
+**2020/05/27, コメント欄のご指摘を受け, ShellScript 内のキャッシュクリアコマンドを変更して再計測し, 結果を更新しました (方法変更前後で結果に大差はありませんでした)。matoken さんありがとうございました！**
+
+本日 (もはや昨日). [こちらの記事](/2019/11/scp-sftp-rsync-comparison)を inductor さんがリツイートされたことをきっかけに, いろいろな方が以下記事を読んでくださいました。
+
+この記事の内容はタイトルの通りで, OpenSSH 公式が [2019/4/17 のリリースノート](https://www.openssh.com/releasenotes.html) で, 「`scp` は非推奨」宣言をしています。  
+ですが, この記事の中で私が行った `scp`, `sftp`, `rsync` の転送速度比較結果について, `rsync` の速度に疑問を持って検証してくださった方がいて, **転送ファイルを削除していないために `rsync` が差分転送になっており, このために `rsync` の速度が速いような結果になっている** という趣旨の指摘をいただきました。
+
+<blockquote class="twitter-tweet"><p lang="ja" dir="ltr">手元で試した結果。受け側のファイルを毎回消してやるとscpよりrsyncの方が少し遅いくらいか。消さないと差分転送になるからrsyncの方が速い。<a href="https://t.co/Bab12AnM73">https://t.co/Bab12AnM73</a></p>&mdash; いわもと こういち (@ttdoda) <a href="https://x.com/ttdoda/status/1264872113007034368?ref_src=twsrc%5Etfw">May 25, 2020</a></blockquote> <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
+
+詳しくは ttdoda さんの上記 Gist にも結果があるのですが, 私の手元でも改めて検証を行ったため, こちらに結果を記載します。
+
+## 検証条件
+
+- 前回と同様
+  - 各コマンドの初回は `sync; sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"` でキャッシュクリアする
+  - 環境は同じ, VirtualBox 上の Ubuntu 18 から Ubuntu 16 にファイル転送
+  - 利用ファイルも同じく `dd` コマンドで作成した 1GB のファイル
+- 追加要件
+  - せっかく再計測するので, 初回の速度と, 2~11 回目の 10回分の平均速度の比較とする[^1]
+  - 転送コマンドの実行前に転送先ファイルの存在確認と削除をする
+
+## 検証スクリプト
+
+上記条件を確実に満たすために, 簡単な ShellScript を作成  
+これを使って検証を行う (条件分岐などあまりきれいじゃないのはご容赦ください)
+
+```bash
+#!/bin/bash
+set -eu
+if [ $# -ne 1 ]; then
+    echo "check the usage"
+    exit 2
+elif [ "$1" != "scp" ] && [ "$1" != "sftp" ] && [ "$1" != "rsync" ]; then
+    echo "check the usage"
+    exit 2
+fi
+
+REMOTE_HOST=192.168.134.5
+BENCH_FILE="/tmp/benchmark"
+SFTP_BATCH=sftp_batch.bat
+case "$1" in
+    "scp" ) CMD="scp" ;;
+    "sftp" ) CMD="sftp" ;;
+    "rsync" ) CMD="rsync" ;;
+esac
+# cache clear and the 1st measurement
+sync
+
+sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
+
+if ssh "${REMOTE_HOST}" test -f "${BENCH_FILE}"; then
+    if ! ssh "${REMOTE_HOST}" rm -f "${BENCH_FILE:?}"; then
+    echo "failed to remove the benchmark file, abort"
+    exit 1
+    fi
+
+    if [ "${CMD}" = "sftp" ]; then
+        time "${CMD}" -b "${SFTP_BATCH}" "${REMOTE_HOST}":/tmp/ >/dev/null
+    else
+        time "${CMD}" "${BENCH_FILE}" "${REMOTE_HOST}":/tmp/ >/dev/null
+    fi
+fi
+
+# 2nd ~ 11th measurement
+for i in {1..10}; do
+    if ssh "${REMOTE_HOST}" test -f "${BENCH_FILE}"; then
+        if ! ssh "${REMOTE_HOST}" rm -f "${BENCH_FILE:?}"; then
+            echo "failed to remove the benchmark file, abort"
+            exit 1
+        fi
+    fi
+    if [ "${CMD}" = "sftp" ]; then
+        time "${CMD}" -b "${SFTP_BATCH}" "${REMOTE_HOST}":/tmp/ >/dev/null
+    else
+        time "${CMD}" "${BENCH_FILE}" "${REMOTE_HOST}":/tmp/ >/dev/null
+    fi
+done
+```
+
+## 転送速度計測
+
+### SCP
+
+```text
+kangetsu@dev_persona:~$ ./measure_remoteCopyCommands.sh scp
+real 0m30.076s
+user 0m9.075s
+sys 0m9.707s
+real 0m28.477s
+user 0m8.760s
+sys 0m6.828s
+real 0m27.743s
+user 0m8.667s
+sys 0m6.275s
+real 0m28.667s
+user 0m8.368s
+sys 0m7.419s
+real 0m28.930s
+user 0m7.622s
+sys 0m8.566s
+real 0m29.233s
+user 0m8.571s
+sys 0m7.550s
+real 0m29.222s
+user 0m8.636s
+sys 0m7.422s
+real 0m28.548s
+user 0m8.431s
+sys 0m7.304s
+real 0m28.218s
+user 0m8.453s
+sys 0m7.112s
+real 0m28.843s
+user 0m8.741s
+sys 0m7.282s
+real 0m27.725s
+user 0m8.249s
+sys 0m6.643s
+kangetsu@dev_persona:~$
+```
+
+- **初回: 30.08s**
+- **2~11 回平均: 28.56s**
+
+### SFTP
+
+```text
+kangetsu@dev_persona:~$ ./measure_remoteCopyCommands.sh sftp
+real 0m36.399s
+user 0m10.213s
+sys 0m12.604s
+real 0m35.171s
+user 0m10.147s
+sys 0m9.836s
+real 0m36.670s
+user 0m10.845s
+sys 0m10.254s
+real 0m34.407s
+user 0m10.055s
+sys 0m9.762s
+real 0m34.664s
+user 0m10.121s
+sys 0m9.873s
+real 0m33.448s
+user 0m10.241s
+sys 0m9.637s
+real 0m34.265s
+user 0m10.210s
+sys 0m10.114s
+real 0m34.823s
+user 0m10.518s
+sys 0m9.481s
+real 0m35.070s
+user 0m10.440s
+sys 0m9.565s
+real 0m34.255s
+user 0m10.135s
+sys 0m9.662s
+real 0m33.786s
+user 0m9.935s
+sys 0m10.347s
+kangetsu@dev_persona:~$
+```
+
+- **初回: 36.40s**
+- **2~11 回平均: 34.66s**
+
+### RSYNC
+
+```text
+kangetsu@dev_persona:~$ ./measure_remoteCopyCommands.sh rsync
+real 0m34.789s
+user 0m9.863s
+sys 0m13.925s
+real 0m33.832s
+user 0m12.133s
+sys 0m7.716s
+real 0m31.969s
+user 0m11.814s
+sys 0m6.965s
+real 0m33.615s
+user 0m12.425s
+sys 0m7.099s
+real 0m31.320s
+user 0m12.180s
+sys 0m6.080s
+real 0m33.233s
+user 0m12.156s
+sys 0m6.865s
+real 0m33.735s
+user 0m12.058s
+sys 0m7.384s
+real 0m33.065s
+user 0m11.873s
+sys 0m7.398s
+real 0m33.498s
+user 0m11.838s
+sys 0m7.091s
+real 0m31.643s
+user 0m11.750s
+sys 0m6.651s
+real 0m33.847s
+user 0m9.488s
+sys 0m10.929s
+kangetsu@dev_persona:~$
+```
+
+- **初回: 34.79s**
+- **2~11 回平均: 32.98s**
+
+### RSYNC (転送ファイル削除なし)
+
+ここで, 初回以外転送ファイルを削除しないパターン, すなわち前回と同様の方法での `rsync` 結果も載せておきます。  
+利用スクリプトは転送ファイル削除処理を削除しただけのものです。
+
+#### 利用スクリプト
+
+```diff
+# kangetsu@dev_persona:~$ diff measure_remoteCopyCommands.sh measure_remoteCopyCommands_wo_rm.sh
+51,57d50
+< if ssh "${REMOTE_HOST}" test -f "${BENCH_FILE}"; then
+< if ! ssh "${REMOTE_HOST}" rm -f "${BENCH_FILE:?}"; then
+< echo "failed to remove the benchmark file, abort"
+< exit 1
+< fi
+< fi
+<
+```
+
+#### 計測結果
+
+```text
+kangetsu@dev_persona:~$ ./measure_remoteCopyCommands_wo_rm.sh rsync
+real 0m33.619s
+user 0m12.031s
+sys 0m9.563s
+real 0m16.699s
+user 0m7.150s
+sys 0m0.428s
+real 0m16.684s
+user 0m6.848s
+sys 0m0.379s
+real 0m16.657s
+user 0m6.829s
+sys 0m0.368s
+real 0m16.935s
+user 0m7.106s
+sys 0m0.322s
+real 0m16.691s
+user 0m6.830s
+sys 0m0.383s
+real 0m16.596s
+user 0m6.870s
+sys 0m0.297s
+real 0m16.558s
+user 0m6.866s
+sys 0m0.296s
+real 0m16.578s
+user 0m6.907s
+sys 0m0.276s
+real 0m16.792s
+user 0m6.958s
+sys 0m0.301s
+real 0m16.651s
+user 0m6.848s
+sys 0m0.360s
+kangetsu@dev_persona:~$
+```
+
+- **初回: 33.62s**
+- **2~11 回平均: 16.68s**
+
+## 計測結果発表
+
+**scp, sftp, rsync 実行時間比較表 (単位: s)**
+
+|  | `scp` | `sftp` | `rsync` | `rsync` (差分転送) |
+| --- | --- | --- | --- | --- |
+| **初回実行** | 30.08 | 36.40 | 34.79 | 33.62 |
+| **2~11 回平均** | 28.56 | 34.66 | 32.98 | 16.68 |
+
+確かに, コメントをいただいた通り, **前回の記事で `rsync` の速度が速かったのは, 転送ファイルを削除していない場合のみ** でした。  
+これは, 「`rsync` は差分転送になっているために転送速度が速くなる」ということのようです。
+
+差分転送をしない, 素の場合での転送速度は, 私の今回の計測環境では,
+
+**`scp` > `rsync` > `sftp`**
+
+となりました。  
+この結果では, `scp` が他のコマンドより速く, `rsync`, `sftp` の間にはあまり差がない, わずかに `rsync` が速い, という感じです。
+
+ただし, 前回の記事でも書いた通り, これは 1GB の単一ファイルの計測結果なので, ファイル数やサイズ, その他環境条件によって結果は変わり得ること, ご注意ください。
+
+## 謝辞
+
+前回の記事の計測方法の誤りを指摘して検証してくださり, Gist, Tweet の掲載を許可してくださった ttdoda さん, ttoda さんの検証結果を伝えてくださった satoh_fumiyasu さん, ありがとうございました！
+
+2020/05/27 追記  
+コメント欄でキャッシュクリア方法の誤りを指摘してくださった matoken さん, ありがとうございました！
+
+[^1]: 前回の記事では初回と 2~6 回の 5回分の平均比較でした

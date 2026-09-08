@@ -1,0 +1,316 @@
+---
+title: SUID と SGID の挙動についてまとめ
+description: 'Linux の SUID と SGID について、実行時のユーザー・グループ権限やディレクトリに設定した場合の挙動を実例とともに整理します。'
+publishedAt: '2020-05-24'
+updatedAt: '2020-05-24'
+tags: ['Linux']
+---
+
+LPIC を勉強していて気になったことまとめシリーズ, SUID と SGID についてです
+
+ちなみに [第1回](/2020/05/awk-vs-cut-string-extraction/) は `awk` と `cut` の違いについて
+
+## SUID (Set User ID) とは
+
+**実行ファイル** に付与する属性です。  
+SUID がついているファイルは, **実行時にそのファイルの所有者の権限で実行** されます。
+
+SUID がついているかどうかは, `ls -l` などで見ることができます。  
+所有者の実行権限に `x` でなく `s` がついていると, SUID が付与されています。
+
+### SUID の利用例
+
+例えば, `passwd` コマンドには SUID がついています (所有者の実行権限が `s`)。
+
+```text
+$ ll $(which passwd)
+-rwsr-xr-x 1 root root 59640 Mar 22 2019 /usr/bin/passwd\*
+kangetsu@ubuntu18:~
+```
+
+`passwd` コマンドはユーザーのパスワードを変更するコマンドで, man の description は以下。
+
+```man
+[...]
+DESCRIPTION
+    The passwd command changes passwords for user accounts. A normal user may only change the password for his/her own account, while the
+    superuser may change the password for any account. passwd also changes the account or associated password validity period.
+[...]
+```
+
+`passwd` コマンドを使う = ユーザーのパスワードを変更するということは, **パスワード情報を格納している `/etc/shadow` ファイルへの書き込みが必要** となります[^1]。  
+しかし, `/etc/shadow` はセキュリティ上, 基本的には root ユーザーのみが読み書きできるものとなっています。
+
+```text
+$ ll /etc/shadow
+-rw-r----- 1 root shadow 939 Apr 18 16:45 /etc/shadow
+kangetsu@ubuntu18:~
+```
+
+当然, 普通に `/etc/shadow` に書き込もうとしても一般ユーザーでは権限の問題ではじかれます。
+
+```text
+kangetsu@ubuntu18:~
+$ echo "hoge" >> /etc/shadow
+-bash: /etc/shadow: Permission denied
+kangetsu@ubuntu18:~
+```
+
+ではなぜ `passwd` コマンドで, 一般ユーザーでもパスワードの変更 = `/etc/shadow` ファイルの更新ができるのかというと, **`passwd` コマンドに SUID がついているため** です。  
+SUID が `passwd` についているので, 一般ユーザーで実行しても, 実行ユーザーが `passwd` ファイルの所有者である root になっています。
+
+**↓kangetsu ユーザーで `passwd` を実行したけど `ps` で見ると root ユーザーになっている**
+
+```text
+kangetsu@ubuntu18:~
+$ passwd
+Changing password for kangetsu.
+(current) UNIX password:
+```
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep [p]asswd
+root 2588 0.0 0.1 51184 3232 pts/0 S+ 08:59 0:00 | \_ passwd
+kangetsu@ubuntu18:~
+```
+
+### つまり SUID は何に使えるのか, 何が嬉しいのか
+
+では, この SUID の機能は, 何が嬉しいのか。
+
+上の例で紹介したように, SUID をうまく使うと,
+
+**「セキュリティ的に一般ユーザーの書き込み権限などは絞っておきたい。でも, 利便性を考えると root ユーザーでなくても更新させたい」**
+
+というファイルがあるとき, SUID をうまく使うことで, 用途を限定した上で, セキュアなファイルへの書き込みを一般ユーザーにも許可できます。
+
+そのために必要なのが, 例えば `passwd` コマンドなどの, **特定の目的を実現するための実行可能ファイル** です。
+
+上で見たように, 一般ユーザーは, `/usr/bin/passwd` ファイルを実行できますが, 書き込み権限はないので中身を書き換えることはできません。
+
+```text
+$ ll $(which passwd)
+-rwsr-xr-x 1 root root 59640 Mar 22 2019 /usr/bin/passwd\*
+kangetsu@ubuntu18:~
+```
+
+だから, `passwd` を実行できても, `/usr/bin/passwd` に記述された使い方しかできません。  
+このように権限を絞ったうえで, `passwd` ファイルの所有者を root にして SUID を付与しているので, 一般ユーザーで実行したときも, `passwd` に記述された用途でのみ, 特殊なファイルを操作できることになります。
+
+`/etc/shadow` という重要なファイルの権限は絞ったままで, そのファイルへの書き込みを一般ユーザーにも許可する, かつその書き込み内容には自由度はなく, `passwd` コマンド内で記述された限定的な用途でしか使えない, という, **セキュリティと利便性を両立させた使い方ができる** ことになります。
+
+とは言え, SUID の利用は, **本来の権限では操作できないファイルを操作することを特権的に許可させている** という挙動なので, ご利用には十分ご注意ください。
+
+### SUID の付与の方法
+
+`chmod` コマンドなどでのファイル権限の数値表現で, `4000` が SUID にあたります。  
+このため, 例えば以下の 755 の権限のファイルに SUID を付与したいときは, 755 に 4000 を足した 4755 で指定してあげればよいです。
+
+```text
+kangetsu@ubuntu18:~
+$ ll suid_test
+-rwxr-xr-x 1 root root 0 May 23 09:04 suid_test\*
+kangetsu@ubuntu18:~
+```
+
+**4755 で `chmod` したら所有者の実行権限が `s` になる**
+
+```text
+kangetsu@ubuntu18:~
+$ sudo chmod 4755 suid_test
+kangetsu@ubuntu18:~
+$ ll suid_test
+-rwsr-xr-x 1 root root 0 May 23 09:04 suid_test\*
+kangetsu@ubuntu18:~
+```
+
+## SGID (Set Group ID) とは
+
+SUID のグループ版です。  
+実行可能ファイルの所有グループの実行権限が `x` でなく `s` になっていると, そのファイルを実行した場合の **実効グループが** 所有グループになります。
+
+例えば, `wall` コマンド[^2] は SGID がついています。
+
+```text
+kangetsu@ubuntu18:~
+$ ll $(which wall)
+-rwxr-sr-x 1 root tty 30800 Mar 5 17:23 /usr/bin/wall\*
+kangetsu@ubuntu18:~
+```
+
+`wall` の場合は, `tty` グループが所有グループなので, このコマンドは `tty` グループの権限で実行されることになります。  
+実際の例を見てみましょう。
+
+```text
+kangetsu@ubuntu18:~
+$ wall
+```
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep [w]all
+kangetsu 2914 0.0 0.1 14632 2340 pts/0 S+ 10:50 0:00 | \_ wall
+kangetsu@ubuntu18:~
+```
+
+**???**
+
+`ps` で見ても, 表示されているのは kangetsu ユーザーのままですね。
+
+これは実は, `ps` コマンドの `u` オプションで表示されるユーザーが, **実効ユーザー (effective user)** なためです。
+
+↓`ps` の man 抜粋
+
+```man
+[...]
+-u userlist
+    Select by effective user ID (EUID) or name. This selects the processes whose effective user name or ID is in userlist.
+    The effective user ID describes the user whose file access permissions are used by the process (see geteuid(2)). Identical to U and
+    --user.
+[...]
+```
+
+Linux のプロセスを見るとき, **実ユーザー (real user), 実効ユーザー (effective user), 実グループ (real group), 実効グループ (effective group)** などの区分があります[^3]。  
+[wikipedia](https://ja.wikipedia.org/wiki/%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E8%AD%98%E5%88%A5%E5%AD%90) くらいしかいいソースを見つけられないのですが, ざっくり説明すると, 以下の通りです。
+
+- real: プロセスの所有者, signal 送信時の権限に影響
+- effective: ファイル作成, ファイルアクセスに影響
+
+検索して見つけられた書籍[^4]の説明では, 以下のようになっていました。
+
+> Broadly speaking, the real numbers are used for accounting and the effective numbers are used for the determination of access permissions.
+
+ということで, `wall` 実行時の EGID も見てみると,
+
+```text
+$ ps o ruser,euser,rgroup,egroup,args axf | head -n 1; ps o ruser,euser,rgroup,egroup,args axf | grep [w]all
+RUSER EUSER RGROUP EGROUP COMMAND
+kangetsu kangetsu kangetsu tty | \_ wall
+kangetsu@ubuntu18:~
+```
+
+このようにちゃんと EGROUP が `wall` の所有グループ, tty になっていました。
+
+### SGID の付与の方法
+
+SUID は, 権限の数値表現では 4000 でした。
+SGID は, 2000 です。
+
+```text
+kangetsu@ubuntu18:~
+$ ll sgid_test
+-rwxr-xr-x 1 root tty 0 May 23 14:18 sgid_test\*
+kangetsu@ubuntu18:~
+$ sudo chmod 2755 sgid_test
+kangetsu@ubuntu18:~
+$ ll sgid_test
+-rwxr-sr-x 1 root tty 0 May 23 14:18 sgid_test\*
+kangetsu@ubuntu18:~
+```
+
+SGID では, 所有グループの実行権限が `s` になります。
+
+## ディレクトリへの SUID, SGID の付与
+
+SUID や SGID は, ファイルのみでなくディレクトリにも付与できます。  
+ただし, ほとんどの場合, **少なくとも Ubuntu ではディレクトリに SUID をセットしても意味はありませんでした**。
+
+一方で, SGID をディレクトリにセットした場合は, **そのディレクトリ内に作成したファイルやディレクトリの所有グループが, SGID の付与されたディレクトリの所有グループと同じになる** という挙動になります。
+
+↓SGID を付与したディレクトリに
+
+```text
+kangetsu@ubuntu18:~
+$ ll -d sgid_dir
+drwxrwsr-x 2 kangetsu tty 4096 May 23 15:02 sgid_dir/
+kangetsu@ubuntu18:~
+```
+
+ファイルやディレクトリを作ると, 所有グループが SGID のついた親ディレクトリと同じグループになる
+
+```text
+kangetsu@ubuntu18:~
+$ touch sgid_dir/hoge
+kangetsu@ubuntu18:~
+$ mkdir sgid_dir/fuga
+kangetsu@ubuntu18:~
+$ ll sgid_dir/
+total 12
+drwxrwsr-x 3 kangetsu tty 4096 May 23 15:06 ./
+drwxr-xr-x 7 kangetsu kangetsu 4096 May 23 15:06 ../
+drwxrwsr-x 2 kangetsu tty 4096 May 23 15:06 fuga/
+-rw-rw-r-- 1 kangetsu tty 0 May 23 15:06 hoge
+kangetsu@ubuntu18:~
+```
+
+これによって, ファイルやディレクトリ共有が `chown` や `chmod` なしに, より容易に可能となります。
+
+詳しい解説は [GNU のマニュアル](https://www.gnu.org/software/coreutils/manual/html_node/Directory-Setuid-and-Setgid.html) に。
+
+> On most systems, if a directory’s set-group-ID bit is set, newly created subfiles inherit the same group as the directory, and newly created subdirectories inherit the set-group-ID bit of the parent directory. On a few systems, a directory’s set-user-ID bit has a similar effect on the ownership of new subfiles and the set-user-ID bits of new subdirectories. These mechanisms let users share files more easily, by lessening the need to use chmod or chown to share new files.
+
+## おまけ: 混乱した挙動, shellscript への SUID や SGID
+
+Twitter に書いたのですが, 私が SUID の挙動を確認しているときにはまった, 混乱した挙動についても書いておきます。
+
+SUID や SGID の実際の挙動を確かめようとして, 実行可能なシェルスクリプトを書いて, それに SUID をセットしました。  
+そして実行すると, その実行ユーザーが実際に実行したユーザーでなく, 所有者である root で実行されることを期待しましたが, そうはなっていませんでした。
+
+↓これを
+
+```text
+kangetsu@ubuntu18:~
+$ cat suid_shell.sh
+#!/bin/bash
+sleep 5
+echo "Finish"
+kangetsu@ubuntu18:~
+$ ll suid_shell.sh
+-rwsr-xr-x 1 root root 36 May 23 14:23 suid_shell.sh\*
+kangetsu@ubuntu18:~
+```
+
+一般ユーザー (kangetsu) で実行して別セッションで `ps` を見ると
+
+```text
+kangetsu@ubuntu18:~
+$ ./suid_shell.sh
+Finish
+```
+
+全部 kangetsu のままで root にならない
+
+```text
+kangetsu@ubuntu18:~
+$ ps o ruser,euser,rgroup,egroup,args axf | head -n 1; ps o ruser,euser,rgroup,egroup,args axf | grep [s]uid_shell
+RUSER EUSER RGROUP EGROUP COMMAND
+kangetsu kangetsu kangetsu kangetsu | \_ /bin/bash ./suid_shell.sh
+kangetsu@ubuntu18:~
+```
+
+初めは非常に混乱したのですが, `ps` の結果をよく見ると, 実行されているコマンドは `/bin/bash ./suid_shell.sh` です。  
+つまり, 直接起動されているプロセスは `bash` なので, シェルスクリプトの方に SUID や SGID をセットしても, `passwd` や `wall` のようにはならないということのようでした。
+
+ちなみに `bash` で実行されているのは, shebang を `#!/bin/bash` で書いているからですが, これを `sh` にしても当然同じでした。  
+shebang を書かない場合は, `./suid_shell.sh` を実行しているプロセスはなく, この中に書いた `sleep` と `echo` がそれぞれ個別に実行されている様子でした (`sleep` 中に `ps` を `sleep` で `grep` したら引っかかった)。
+
+つまり, **シェルスクリプトには SUID や SGID を付与することはできない, より正確に書くと付与はできるけど意味はない**, ということになりそうです。
+
+## まとめ
+
+- SUID は実行可能ファイルに付与する
+  - SUID がセットされているファイルは, 実行すると実効ユーザーがそのファイルの所有者になる
+- SGID は実行可能ファイルやディレクトリに付与する
+  - SGID がセットされているファイルは, 実行すると実効グループがそのファイルの所有グループになる
+  - SGID がセットされているディレクトリ配下にファイルやディレクトリを作ると, その所有グループが SGID のセットされているディレクトリと同じグループになる
+- SUID や SGID をうまく使うと, セキュリティと利便性を両立した運用が可能
+  - ただし逆にセキュリティホールを生み出すことにもなり得るので運用は慎重に[^5]
+
+スティッキービットについても書いておこうと思ったのですが, 長くなったので別記事で。
+
+[^1]: 以前は root ユーザー以外も読み取れる /etc/passwd ファイルにパスワードが書かれていたが, セキュリティの問題上, 近年では代わりにより権限を絞った /etc/shadow に書かれるようになっています
+[^2]: ログイン中のユーザーにメッセージを送るコマンドです, メンテ前に作業内容保存を促したりするときに使うようですが, 最近はあまり使うことはないのではないでしょうか
+[^3]: 他にも saved UID|GID や filesystem UID の区分があるようです
+[^4]: Nemeth, E., Snyder, G., and Hein, T. R. (2006) "Linux Administration Handbook", 2Ed., Addison-Wesley Professional.
+[^5]: 詳しく解説しませんでしたが, find コマンドは特定パーミッションを持つファイルやディレクトリの検索もできるので, 不要な SUID や SGID が新たに付与されていないかを検索できます

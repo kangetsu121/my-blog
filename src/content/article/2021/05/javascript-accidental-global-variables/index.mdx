@@ -1,0 +1,241 @@
+---
+title: 'JavaScript での意図しないグローバル変数の生成に注意'
+description: 'JavaScript で変数宣言を忘れると意図せずグローバル変数が生成される問題について、let、const、var と比較しながら挙動と対策を確認します。'
+publishedAt: '2021-05-23'
+updatedAt: '2021-05-23'
+tags: ['JavaScript', 'Google Apps Script']
+---
+
+## TL;DR
+
+- JavaScript, Google Apps Script では思わぬバグ防止のために **strict mode を使う**
+  - 冒頭に `'use strict';` と書けばよい[^1]
+- 変数の巻き上げによる思わぬバグ防止のために `var` は使わず `let`, `const` を使う
+
+[^1]: 厳密には冒頭に限らない。strict mode を適用したいスコープで書けばよいが, 冒頭に書く = スクリプト全体に適用すれば普通は良い
+
+## 何が起きたか
+
+先日 Google Apps Script を書いていました。Google Apps Script (GAS) は [JavScript で記述することができ](https://developers.google.com/apps-script/overview)[^2]、2021年5月現在では [V8 Runtime にも対応](https://developers.google.com/apps-script/guides/v8-runtime)し、よりモダンな JavaScript の文法が利用できます[^3]。
+
+私は JavScript はほぼ経験がなかったのですが、別件で [JavaScript Primer](https://jsprimer.net/) でその前にたまたま学習していたので、思っていたより気軽に書くことができました。
+
+ところが、動作確認中に意図しない動作になっており、スクリプトを見直しても怪しいところはすぐには見つけられませんでした。具体的には、以下のようなスクリプトです (一部を抜粋、変数名などは適当に変えています)。
+
+デバッグ中に `foo` の値が意図しないものになっていたことに気づきました。JavScript に慣れた方ならすぐ問題点がわかるかもしれません。
+
+```js
+// ...
+function getFooLink(fooName) {
+  // ...
+  for (foo of fooInfo) {
+    if (foo[0] === fooName) {
+      return foo[1];
+    }
+  }
+}
+// ...
+function main() {
+// ...
+    let fooLinkArray = [];
+    for (foo of foos) {
+      let fooLink = getFooLink(foo);
+      fooLinkArray.push(`${foo}\n${fooLink}`);
+    }
+// ...
+}
+```
+
+[^2]: > Google Apps Script is a rapid application development platform that makes it fast and easy to create business applications that integrate with Google Workspace. You write code in modern JavaScript and have access to built-in libraries for favorite Google Workspace applications like Gmail, Calendar, Drive, and more.
+
+[^3]: ただし ES6 モジュールなど、一部機能はサポートされていない
+
+## 原因：何が問題だったか
+
+問題の原因を書くと、**`for` 文の中での一時変数の宣言時に、`let` や `const` 等を使っていないこと** でした。JavaScript では、**宣言子なしに変数宣言をすると、その変数がグローバル変数となります**[^4]。
+
+私が普段一番使う言語が Python なのですが、Python では変数の宣言子はありません。普段の変数宣言では `let` や `const` を使うようにもちろん意識していたのですが, `for (x of y) {}` の構文では微妙に Python と似ている (と思う) せいか, 宣言子の利用を忘れてしまっていました。これが `for (let i = 0; i < num; i++) {}` のような昔ながらの構文で書いていたら忘れていなかったと思います。
+
+基本的なことかもしれませんが、こんなミスをしてしまっていました。
+
+[^4]: https://developer.mozilla.org/ja/docs/Web/JavaScript/Guide/Grammar_and_types#declaring_variables
+
+## 検証
+
+上記のような、スコープの変化を検証してみます。
+
+1. for ブロック内での参照
+2. for ブロック外、同一関数内での参照
+3. グローバルスコープからの参照
+
+の順にそれぞれ見ています。
+
+- 検証環境：Google Chrome 90.0.4430.212（Official Build） （64 ビット）
+
+### 1. let
+
+```js
+for (let e of array) {}
+```
+
+のパターンです。**`for` のブロックを抜けると参照できなくなります**。
+
+```js
+function scopeTest() {
+    let array1 = ['a', 'b', 'c'];
+    for (let e1 of array1) {
+        console.log(e1);  // 1
+    }
+    console.log(e1);  // 2
+}
+```
+
+```js
+scopeTest();
+```
+
+```log
+VM267:4 a
+VM267:4 b
+VM267:4 c
+VM267:6 Uncaught ReferenceError: e1 is not defined
+    at scopeTest (<anonymous>:6:17)
+    at <anonymous>:1:1
+```
+
+```js
+console.log(e1);  // 3
+```
+
+```log
+VM339:1 Uncaught ReferenceError: e1 is not defined
+    at <anonymous>:1:13
+```
+
+### 2. const
+
+```js
+for (const e of array) {}
+```
+
+のパターンです。`let` と同じく、`for` のブロックを抜けると参照できなくなります。
+
+```js
+function scopeTest2() {
+    let array2 = ['x', 'y', 'z'];
+    for (const e2 of array2) {
+        console.log(e2);  // 1
+    }
+    console.log(e2); // 2
+}
+```
+
+```js
+scopeTest2();
+```
+
+```log
+VM345:4 x
+VM345:4 y
+VM345:4 z
+VM345:6 Uncaught ReferenceError: e2 is not defined
+    at scopeTest2 (<anonymous>:6:17)
+    at <anonymous>:1:1
+```
+
+```js
+console.log(e2);  // 3
+```
+
+```log
+VM415:1 Uncaught ReferenceError: e2 is not defined
+    at <anonymous>:1:13
+```
+
+### 3. var
+
+ここで、最近の JavaScript では使うことはありませんが、var で宣言した場合も見ます。
+
+```js
+for (var e of array) {}
+```
+
+`var` を使った場合は **変数の巻き上げ**[^5]という特殊な挙動が起き、グローバル空間からは参照できませんが、**スコープの一つ外から参照できてしまいます**。より正確には、変数宣言の部分が一つ外のスコープに暗黙的に移動されてしまいます (詳細は脚注のリンク先を見てみてください)。
+
+巻き上げが起きた結果、1だけでなく 2でも参照できてしまう、ただし 3からは参照できない、という結果になっています。
+
+この挙動は多くの初学者を惑わせており、この問題解決のために `let` や `const` が仕様となったようです。
+
+```js
+function scopeTest3() {
+    let array3 = ['g', 'h', 'i'];
+    for (var e3 of array3) {
+        console.log(e3);  // 1
+    }
+    console.log(e3);  // 2
+}
+```
+
+```js
+scopeTest3();
+```
+
+```log
+VM420:4 g
+VM420:4 h
+VM420:4 i
+VM420:6 i
+```
+
+```js
+console.log(e3);  // 3
+```
+
+```log
+VM492:1 Uncaught ReferenceError: e3 is not defined
+    at <anonymous>:1:13
+```
+
+[^5]: https://jsprimer.net/basic/function-scope/#hoisting-var
+
+### 4. 宣言子なし
+
+最後に、私が今回やらかしてしまった、宣言子なしのパターンです。1, 2, 3 いずれからも参照できており、確かにグローバル変数となっています。
+
+```js
+function scopeTest4() {
+    let array4 = ['j', 'k', 'l'];
+    for (e4 of array4) {
+        console.log(e4);  // 1
+    }
+    console.log(e4);  // 2
+}
+```
+
+```js
+scopeTest4();
+```
+
+```log
+VM100:4 j
+VM100:4 k
+VM100:4 l
+VM100:6 l
+```
+
+```js
+console.log(e4);  // 3
+```
+
+```log
+VM182:1 l
+```
+
+## 簡単な対策
+
+今回の私のような失敗、すなわち 宣言子を忘れて意図しないグローバル変数を生み出す ことは、実は strict mode を使えば簡単に回避できます。
+
+Google Apps Script でも strict mode が使えるようになっているので、`'use strict';` を記述しておきましょう。
+JavaScript に不慣れなこと、GAS でも strict mode が使えると思っていなかったことも重なり、今回のような問題になってしまいましたが、今後は同じことを繰り返さないだろうと前向きに捉えることにします。
+
+基本的なことですが記録。

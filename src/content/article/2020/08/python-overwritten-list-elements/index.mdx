@@ -1,0 +1,132 @@
+---
+title: 'Python において上書きされた配列の元の要素はどうなるか'
+description: 'Python のリスト要素を別の値で上書きしたとき、元のオブジェクトがどう扱われるのかを、参照やメモリの挙動を実験しながら確認します。'
+publishedAt: '2020-08-30'
+updatedAt: '2020-08-30'
+tags: ['Python']
+---
+
+仕事や勉強はもちろんしているのですが, 最近遅々として記事が増えないので, もっと気楽なアウトプットを試してみようと思います。  
+第一弾として, C言語をかじった後に気になった, 表題の「Python において上書きされた配列の元の要素はどうなるか」の実験メモです。
+
+なお, [言語実装によってメモリ管理の方法が異なります](https://docs.python.org/ja/3/faq/design.html#how-does-python-manage-memory) が, ここでは CPython を対象としています。
+
+## この記事で何を書くのか
+
+　Python ではある配列変数を後で上書きすることができます。このとき, 上書きされた元の要素はどこからも参照されることのないデータになるはずです。  
+そこで, この記事では, このように **Python で参照が切れたはずのメモリアドレスのデータがどうなっているのか** を確かめます。
+
+## なぜこの記事を書くのか
+
+　C言語と Python の配列の仕様の違いが気になったためです。
+
+　C言語をちょっと勉強したのですが, C言語では Python のように, 既に宣言された配列変数を後から上書きすることは簡単にはできません。いくつか理由はあると思うのですが, 今の私がぱっと思いつくのは,
+
+- C言語は静的型付け言語であり, 配列もデータ型と要素数が宣言時に固定される
+- C言語の配列変数はポインタ
+
+などです。
+
+　C言語でできない配列の再代入ができる Python では, どういう挙動になっているのだろう, という疑問が発端です。
+
+## 実験
+
+### 環境情報
+
+- Python
+
+```text
+$ python3 --version
+Python 3.6.9
+```
+
+- OS
+
+```text
+$ uname -a
+Linux ubuntu18 4.15.0-112-generic #113-Ubuntu SMP Thu Jul 9 23:41:39 UTC 2020 x86_64 x86_64 x86_64 GNU/Linux
+```
+
+### 道具
+
+- [`id()`](https://docs.python.org/ja/3/library/functions.html#id): 組み込み関数で, 引数として渡した変数のメモリアドレスを取得できる
+- [`ctypes`](https://docs.python.org/ja/3/library/ctypes.html): C と互換性のあるデータ型を提供するライブラリ。Python にポインタがないため疑似ポインタの実現に利用
+
+### 手順
+
+1. 配列を宣言
+   1. 配列とその要素のメモリアドレスを確認
+   2. ポインタ経由で配列と代表の要素の値を確認
+2. 1 の配列に要素数と要素の値が異なる配列を再代入
+   1. 配列とその要素のメモリアドレスを確認
+   2. ポインタ経由で 1 の配列と代表の要素の値を確認
+
+```python
+import ctypes
+
+# 1
+ls = [0, 1, 2, 3, 4]
+
+## 1-1
+print("ls is:", ls, "\nid(ls) is:", id(ls), "\nid of each element of ls is:", [id(i) for i in ls])
+
+## 1-2
+ls_address = id(ls)
+ls_1_address = id(ls[1])
+ls_address_pointer = ctypes.cast(ls_address, ctypes.py_object).value
+ls_1_address_pointer = ctypes.cast(ls_1_address, ctypes.py_object).value
+print(ls_address_pointer)
+print(ls_1_address_pointer)
+
+# 2
+print("\nreassign ls...\n")
+ls = [5, 6, 7]
+
+# 2-1
+print("ls is:", ls, "\nid(ls) is:", id(ls), "\nid of each element of ls is:", [id(i) for i in ls])
+
+# 2-2
+print("\nStill can access to the garbage address?\n")
+print(ls_address_pointer)
+print(ls_1_address_pointer)
+```
+
+### 結果
+
+```text
+$ python3 pointer.py
+ls is: [0, 1, 2, 3, 4]
+id(ls) is: 140307991413192
+id of each element of ls is: [10914464, 10914496, 10914528, 10914560, 10914592]
+[0, 1, 2, 3, 4]
+1
+reassign ls...
+ls is: [5, 6, 7]
+id(ls) is: 140307991413256
+id of each element of ls is: [10914624, 10914656, 10914688]
+Still can access to the garbage address?
+[0, 1, 2, 3, 4]
+1
+```
+
+まず目につくのは, `reassign ls...` の後に `ls` 自信とその要素の `id` (メモリアドレス) が変化していることです。  
+つまり, Python では同じ変数に異なる値を再代入すると, **まったく別のオブジェクトが作られる** ことがわかります[^1]。
+
+そして, 元の配列がどうなったのかが, 次の `Still can access to the garbage address?` の後に示されています。  
+上書きしたはずの `[0, 1, 2, 3, 4]` という元のリストにアクセスできています。
+
+Python では, こうした参照が切れた変数は, Garbage Collection によって回収されます。逆に言えば, GC が走るまでは, そのメモリアドレスにはデータが保持されており, 無理やりアクセスすれば読み出すことが可能となります。  
+とは言え本来は参照が切れた時点で GC が走るはずなので, 今回のように無理やり上書き前の変数のアドレスを確保して, ポインタでの参照のようなことをしない限り気にすることはないのだと思います。
+
+なお, C言語では `malloc()` などでヒープに確保したデータは, 明示的に `free()` で解放しないとメモリリークを起こしてしまいます。
+
+## 終わりに
+
+　以上、「Python において上書きされた配列の元の要素はどうなるか」でした。  
+上書き前にメモリアドレスを保持しておいて, `ctypes` を使ってポインタ経由で読みだ出せばアクセスできましたね。
+
+少しだけど C言語に触れたことで, Python などの理解も以前より進み, これからもより進む気がしています。
+
+もともと自分の備忘も目的だったので, 今後しばらくはこれくらいの軽さで記事を書いていけたらと思います。
+
+[^1]: Python では配列も第一級オブジェクトです

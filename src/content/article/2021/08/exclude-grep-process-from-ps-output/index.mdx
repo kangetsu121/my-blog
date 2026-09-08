@@ -1,0 +1,230 @@
+---
+title: 'プロセスを grep するときに grep プロセス自身を結果から除外する Tip とその理屈'
+description: 'ps の結果を grep するときに grep 自身を除外する [x] の書き方について、正規表現の仕組みからなぜ機能するのかを解説します。'
+publishedAt: '2021-08-14'
+updatedAt: '2021-08-14'
+tags: ['Linux']
+---
+
+プロセスの grep を業務柄よくやるのですが, grep 自身のプロセスが引っかかるのがきれいじゃなくて気になっていました[^1]。
+
+[^1]: 最近は `ps` たくさん打ったので感覚が麻痺した
+
+(↓の `grep --color=auto sshd` の部分)
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep sshd
+root       641  0.0  0.3  72308  6324 ?        Ss   01:27   0:00 /usr/sbin/sshd -D
+root      4524  0.0  0.3 107996  7092 ?        Ss   03:44   0:00  _ sshd: kangetsu [priv]
+kangetsu  4557  0.0  0.2 108360  5064 ?        S    03:44   0:00  |   _ sshd: kangetsu@pts/0
+kangetsu  4952  0.0  0.0  13144  1016 pts/0    S+   04:19   0:00  |           _ grep --color=auto sshd
+root      4527  0.0  0.3 108000  7088 ?        Ss   03:44   0:00  _ sshd: kangetsu [priv]
+kangetsu  4576  0.0  0.1 108000  3624 ?        S    03:44   0:00  |   _ sshd: kangetsu@notty
+root      4635  0.0  0.3 107996  7080 ?        Ss   03:57   0:00  _ sshd: kangetsu [priv]
+kangetsu  4656  1.7  0.2 108360  5080 ?        S    03:57   0:22  |   _ sshd: kangetsu@pts/1
+root      4639  0.0  0.3 108000  7084 ?        Ss   03:57   0:00  _ sshd: kangetsu [priv]
+kangetsu  4690  0.0  0.1 108000  3512 ?        S    03:57   0:00      _ sshd: kangetsu@notty
+kangetsu@ubuntu18:~
+```
+
+はじめは `| grep -vw grep` などで除外してましたが, `[]` を使うというもっとスマートな方法がありました。  
+その解説をした記事は複数あるのですが, 読んだだけではピンとこなかったので自分の納得のために理屈をまとめたのがこの記事です。
+
+## TL;DR
+
+- `grep` の引数の文字列の先頭を `[]` で囲めば OK
+  - `[]` で囲む文字は先頭でなくても OK, 複数でも OK (やる意味はない)
+  - _e.g._, `ps auxf | grep [h]oge`
+  - GNU grep で確認, 他は未確認
+
+## 環境情報
+
+```text
+kangetsu@ubuntu18:~
+$ dpkg -l | grep grep
+ii  grep                                   3.1-2build1                                     amd64        GNU grep, egrep and fgrep
+kangetsu@ubuntu18:~
+```
+
+## プロセス grep 時に grep プロセス自身を除外する方法
+
+検索すればいろいろ記事があるので結論から書くと, `grep` したい文字列の先頭文字を `[]` で囲めば OK です。以下実験結果。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep yes
+kangetsu  4701  0.0  0.0  13144  1108 pts/0    S+   17:09   0:00  |           _ grep --color=auto yes
+kangetsu  4699 29.0  0.0   6184   784 pts/1    R+   17:09   0:01  |           _ yes
+kangetsu@ubuntu18:~
+$ ps auxf | grep [y]es
+kangetsu  4699 29.7  0.0   6184   784 pts/1    R+   17:09   0:03  |           _ yes
+kangetsu@ubuntu18:~
+```
+
+### [] で grep プロセス自身を除外できる理由
+
+なぜ `[]` の利用でこの結果になるかというと, (少なくとも) GNU grep では標準正規表現を利用できるためです。  
+grep(1) の man を見ます。
+
+```text
+[...]
+REGULAR EXPRESSIONS
+[...]
+       grep understands three different versions of regular expression syntax: “basic” (BRE), “extended” (ERE) and “perl” (PCRE).  In GNU grep there
+       is no difference in available functionality between basic and extended syntaxes.  In other implementations,  basic  regular  expressions  are
+       less  powerful.   The following description applies to extended regular expressions; differences for basic regular expressions are summarized
+       afterwards.  Perl-compatible regular expressions give additional functionality, and are documented in pcresyntax(3) and  pcrepattern(3),  but
+       work only if PCRE is available in the system.
+[...]
+```
+
+> grep understands three different versions of regular expression syntax: “basic” (BRE), “extended” (ERE) and “perl” (PCRE). In GNU grep there is no difference in available functionality between basic and extended syntaxes.
+
+とあります。  
+つまり, 例えば GNU grep で `ps auxf | grep [y]es` としたとき, `grep` の引数である `[y]es` は標準正規表現と解釈されます。
+`[]` は標準正規表現で「`[]` 内の任意の一文字」を意味するので, `[y]es` と `yes` はマッチします。
+`[]` の説明については, 同じく grep(1) の man に下記記述があります。
+
+```text
+[...]
+   Character Classes and Bracket Expressions
+       A  bracket  expression  is a list of characters enclosed by [ and ].  It matches any single character in that list; if the first character of
+       the list is the caret ^ then it matches any character not in the list.  For example, the regular expression [0123456789] matches  any  single
+       digit.
+[...]
+```
+
+仮にこれが `fes` や `es` だとマッチしません。
+
+```text
+kangetsu@ubuntu18:~
+$ echo fes es | grep [y]es
+kangetsu@ubuntu18:~
+```
+
+以上から, **`grep` の引数の検索パターンに `[]` を使うことで, 次の理由で `grep` プロセス自身を検索結果から除外できます**。
+
+1. `[]` を使わない `grep` で `grep` プロセス自身が引っかかるのは, `grep` の引数のパターン文字列が検索パターンに合致するため
+    - _e.g._, `ps auxf | grep yes` なら `grep yes` に `yes` が含まれるので引っかかる
+2. `[]` を使うとこれを回避できるのは, `grep [y]es` のプロセス自身には `yes` という文字列は含まれないため (`[y]es` であって `yes` ではない)
+
+実際, 別シェルで `grep [y]es` を流し続けていると, `ps` したときには `[]` 付きで表示されています。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep grep
+kangetsu  5343  0.0  0.0  13144  1096 pts/0    S+   06:55   0:00  |           _ grep --color=auto grep
+kangetsu  5321  0.0  0.0  13144  1040 pts/1    S+   06:55   0:00  |           _ grep --color=auto [y]es -
+kangetsu@ubuntu18:~
+```
+
+なお, わかりやすさのために `grep` の引数の先頭文字を `[]` で囲みましたが, 理屈からすれば次の様に `[]` で囲む文字はどこでも OK です。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep y[e]s
+kangetsu  5182 28.1  0.0   6184   792 pts/1    R+   06:35   0:02  |           _ yes
+kangetsu@ubuntu18:~
+$ ps auxf | grep y[e][s]
+kangetsu  5182 27.1  0.0   6184   792 pts/1    R+   06:35   0:02  |           _ yes
+kangetsu@ubuntu18:~
+$ ps auxf | grep ye[s]
+kangetsu  5182 27.2  0.0   6184   792 pts/1    R+   06:35   0:03  |           _ yes
+kangetsu@ubuntu18:~
+```
+
+## おまけ
+
+### [y]es のような文字列を検索したい
+
+そんなニーズはないと思いますが, `[y]es` で検索している `grep` プロセスにマッチさせたい場合は次の様に `[ ]` をエスケープして引用符で囲めばできます。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep "\[y\]es"
+kangetsu  5419  0.0  0.0  13144  1084 pts/1    S+   07:02   0:00  |           _ grep --color=auto [y]es -
+kangetsu@ubuntu18:~
+```
+
+エスケープするだけだとエスケープなしと同じ結果になるのは, 以下のあたりが原因でしょうか。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep \[y\]es
+kangetsu@ubuntu18:~
+```
+
+```text
+[...]
+Any meta-character with special  meaning  may  be  quoted  by  preceding  it  with  a  backslash.
+[...]
+```
+
+### 標準正規表現と拡張正規表現 (-E オプション) の違い
+
+grep(1) の man には以下の記述があります。
+
+```text
+[...]
+   Basic vs Extended Regular Expressions
+       In  basic  regular  expressions the meta-characters ?, +, {, |, (, and ) lose their special meaning; instead use the backslashed versions \?,
+       \+, \{, \|, \(, and \).
+[...]
+```
+
+つまり, `-E` オプションを使わなくても OR 検索などはできます (知らなかった......)。  
+通常, 以下の様に `-E` なしで OR 検索をしようとすると意図した結果になりません。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep "[y]es|[s]shd"
+kangetsu@ubuntu18:~
+```
+
+ところが, これら特殊文字を `\` でエスケープしてあげることで, 標準正規表現でも OR 検索などできます。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep "[y]es\|[s]shd"
+root       641  0.0  0.3  72308  6324 ?        Ss   02:49   0:00 /usr/sbin/sshd -D
+root      4524  0.0  0.3 107996  7092 ?        Ss   05:06   0:00  _ sshd: kangetsu [priv]
+kangetsu  4557  0.0  0.2 108360  5064 ?        S    05:06   0:01  |   _ sshd: kangetsu@pts/0
+root      4527  0.0  0.3 108000  7088 ?        Ss   05:06   0:00  _ sshd: kangetsu [priv]
+kangetsu  4576  0.0  0.1 108000  3624 ?        S    05:06   0:00  |   _ sshd: kangetsu@notty
+root      4635  0.0  0.3 107996  7080 ?        Ss   05:20   0:00  _ sshd: kangetsu [priv]
+kangetsu  4656  3.6  0.2 108360  5080 ?        R    05:20   4:59  |   _ sshd: kangetsu@pts/1
+kangetsu  5556 29.0  0.0   6184   820 pts/1    R+   07:36   0:06  |           _ yes
+root      4639  0.0  0.3 108000  7084 ?        Ss   05:20   0:00  _ sshd: kangetsu [priv]
+kangetsu  4690  0.0  0.1 108000  3512 ?        S    05:20   0:00      _ sshd: kangetsu@notty
+kangetsu@ubuntu18:~
+```
+
+ただ, エスケープが多いと可読性が悪いので, 素直に `-E` を使うのがよいと思います。
+
+```text
+kangetsu@ubuntu18:~
+$ ps auxf | grep -E "[y]es|[s]shd"
+root       641  0.0  0.3  72308  6324 ?        Ss   02:49   0:00 /usr/sbin/sshd -D
+root      4524  0.0  0.3 107996  7092 ?        Ss   05:06   0:00  _ sshd: kangetsu [priv]
+kangetsu  4557  0.0  0.2 108360  5064 ?        S    05:06   0:01  |   _ sshd: kangetsu@pts/0
+root      4527  0.0  0.3 108000  7088 ?        Ss   05:06   0:00  _ sshd: kangetsu [priv]
+kangetsu  4576  0.0  0.1 108000  3624 ?        S    05:06   0:00  |   _ sshd: kangetsu@notty
+root      4635  0.0  0.3 107996  7080 ?        Ss   05:20   0:00  _ sshd: kangetsu [priv]
+kangetsu  4656  3.6  0.2 108360  5080 ?        R    05:20   5:04  |   _ sshd: kangetsu@pts/1
+kangetsu  5556 28.8  0.0   6184   820 pts/1    R+   07:36   0:12  |           _ yes
+root      4639  0.0  0.3 108000  7084 ?        Ss   05:20   0:00  _ sshd: kangetsu [priv]
+kangetsu  4690  0.0  0.1 108000  3512 ?        S    05:20   0:00      _ sshd: kangetsu@notty
+kangetsu@ubuntu18:~
+```
+
+### egrep, fgrep, rgrep は deprecated
+
+わたしは使ったことないですが, `egrep`, `fgrep`, `rgrep` は後方互換性のためにあるだけで deprecated らしいですね。
+
+```text
+[...]
+       In addition, the variant programs egrep, fgrep and rgrep are the same as grep -E, grep -F, and grep -r,  respectively.   These  variants  are
+       deprecated, but are provided for backward compatibility.
+[...]
+```

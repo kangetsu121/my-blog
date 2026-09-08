@@ -1,0 +1,132 @@
+---
+title: 'Linux 文字列抽出: awk と cut の挙動の比較'
+description: 'Linux で文字列を分割・抽出するときの awk と cut の挙動を、区切り文字や連続した空白の扱い、実行速度の違いから比較します。'
+publishedAt: '2020-05-22'
+updatedAt: '2020-05-22'
+tags: ['Linux']
+---
+
+LPIC を勉強していて気になったことまとめシリーズです。
+
+業務で Linux を触っているのでいろいろなコマンドを使う機会は多いのですが, テキストの一部を抽出するときには `awk` をよく使っていました[^1]。  
+同じような目的で `cut` を使えることは知ってはいましたが, 先に `awk` を覚えたこともあり, 使い分けることはしていませんでした。
+
+しかし LPIC を勉強していて, 改めてこれらコマンドの差異を知りたくて少し調べました。
+ごく簡単かつ他のブログの引用が主です。
+
+## 区切り文字 (delimiter) を ' ' (半角スペース) にした場合の挙動の違い
+
+`awk`, `cut` 共に区切り文字を指定して, その区切り文字で区切られた「フィールド」を指定して抽出したりします。
+
+https://unix.stackexchange.com/questions/132313/what-are-the-exact-differences-between-awk-and-cut-with-grep
+
+こちらの質問と回答が参考になるのですが, この区切り文字に半角スペース `' '` を指定した場合の挙動などが `awk` と `cut` で異なります。  
+実際に以下の 3つの例で挙動を比較してみます。
+
+### 文字列1: "abc def"
+
+シンプルな例, 区切り文字が 1つだけのケース
+
+```text
+kangetsu@ubuntu18:~
+$ echo "abc def" | cut -d ' ' -f 2
+def
+kangetsu@ubuntu18:~
+$ echo "abc def" | awk -F ' ' '{print $2}'
+def
+kangetsu@ubuntu18:~
+```
+
+- `cut`: スペースを区切りとした 2フィールド目, `def` を抽出
+- `awk`: スペースを区切りとした 2フィールド目, `def` を抽出
+
+**結果: 同じ**
+
+### 文字列2: "abc def"
+
+区切り文字である `' '` が複数連続しているケース
+
+```text
+kangetsu@ubuntu18:~
+$ echo "abc def" | cut -d ' ' -f 2
+kangetsu@ubuntu18:~
+$ echo "abc def" | awk -F ' ' '{print $2}'
+def
+kangetsu@ubuntu18:~
+```
+
+- `cut`: 厳密にスペースを区切りとした 2フィールド目, `' '` を抽出
+- `awk`: 連続したスペースはひとまとまりとして捉え, 2フィールド目, `def` を抽出
+
+**結果: `cut` は厳密に解釈, `awk` は 2番目の文字列を抽出**
+
+### 文字列3: " abc def"
+
+区切り文字である `' '` が先頭にある, かつ途中で複数連続しているケース
+
+```text
+kangetsu@ubuntu18:~
+$ echo " abc def" | cut -d ' ' -f 2
+abc
+kangetsu@ubuntu18:~
+$ echo " abc def" | awk -F ' ' '{print $2}'
+def
+kangetsu@ubuntu18:~
+```
+
+- `cut`: 厳密にスペースを区切りとした 2フィールド目, `abc` を抽出
+- `awk`: 連続したスペースはひとまとまりとして捉え, 2フィールド目, `def` を抽出
+
+**結果: `cut` は厳密に解釈, `awk` は 2番目の文字列を抽出**
+
+### 結果の解釈とその理由
+
+以上のように, `cut` と `awk` では半角スペースを区切り文字としたときの挙動が異なります。  
+`cut` はある種そのまま, 分かりやすい挙動なのですが, `awk` は半角スペースを 1つずつではなくまとまりとして解釈しているようです[^2]。
+
+実用場面を考えると, スペース 1 つを厳密に 1 区切りとしてフィールド抽出したいケースは少ないかと思うので, そう考えると `awk` の方が使い勝手はよいのかなと思います。  
+少なくとも私が使う程度の範囲では, `awk` の方が適切なことが多いです。
+
+半角スペースを区切り文字として指定したときの特殊な挙動は, man awk(1) に記載があります。
+
+```text
+[...]
+Fields
+    As each input record is read, gawk splits the record into fields, using the value of the FS variable as the field separator. If FS is a sin‐
+    gle character, fields are separated by that character. If FS is the null string, then each individual character becomes a separate field.
+    Otherwise, FS is expected to be a full regular expression. In the special case that FS is a single space, fields are separated by runs of
+    spaces and/or tabs and/or newlines. (But see the section POSIX COMPATIBILITY, below). NOTE: The value of IGNORECASE (see below) also
+    affects how fields are split when FS is a regular expression, and how records are separated when RS is a regular expression.
+[...]
+```
+
+スペースを指定した場合は特殊挙動で, 区切り文字は連続するスペース, タブ, 改行コードと解釈されるとのことです。
+
+### おまけ: 区切り文字が半角スペースでない場合 "abc:::def"
+
+```text
+kangetsu@ubuntu18:~
+$ echo "abc:::def" | cut -d ':' -f 2
+kangetsu@ubuntu18:~
+$ echo "abc:::def" | awk -F ':' '{print $2}'
+kangetsu@ubuntu18:~
+```
+
+delimiter (Field Separator) が半角スペースじゃない場合は, `awk` も半角スペースの時のような解釈ではなく直感的な動きになっています。  
+man awk(1) にある通り, 半角スペースを指定した時が特殊な動きです。
+
+## 速度比較
+
+こちらのブログで紹介されているのですが, 同じ目的で使用した `cut` と `awk` の速度を比較した場合, かなり `awk` の方が有利なようです。  
+https://blog.hanhans.net/2014/01/15/awk-cut-bench/
+
+条件にもよるとは思うのですが, あえて `cut` を使うケースはあまりないのではないでしょうか。  
+普段使いでは基本 `awk` でよいと思います。
+
+## まとめ
+
+- 文字列抽出というユースケースの一般系では, 使い勝手, 速度の面でも `awk` が有利なことが多いかと思うので, 基本 `awk` を使えばよさそう
+- `cut` はあえて使わなくてもよさそう
+
+[^1]: awk は高機能で, これと sed  だけで本一冊出てるほどなのでもっといろいろできるということは知っていますが, 現時点では私はこの程度のことにしか使えていません
+[^2]: 文字列 3 のケースは行頭のスペースで 1 と数えるかと思いましたが, そうはなっていないんですよね......ここはまだ理解できていない

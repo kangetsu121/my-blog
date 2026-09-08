@@ -1,0 +1,234 @@
+---
+title: OpenSSH 公式による scp 非推奨宣言を受け, scp, sftp, rsync を比較してみた (2020/5/25 rsync の計測結果について注記追加)
+description: 'OpenSSH による scp の非推奨化をきっかけに、scp、sftp、rsync の特徴を整理し、実際のファイル転送速度も比較します。'
+publishedAt: '2019-11-04'
+updatedAt: '2020-05-25'
+tags: ['Linux', 'パフォーマンス']
+---
+
+[2020/5/26 再検証記事追加追記](/2020/05/scp-sftp-rsync-comparison-revisited/)
+
+**Twitter でのご指摘を受けて再検証しました, 転送先のファイルを削除していないために差分転送になっていた点を考慮したものとなっています。`rsync` の速度については結果が変わっています。**
+
+## TL;DR
+
+- scp はセキュリティ, 今後の開発優先度を考えて公式で非推奨宣言している
+- ~~転送速度は (1GB のファイル転送の計測では) rsync >> scp > sftp~~
+  - Twitter でコメントをいただき, 転送ファイルの削除を都度していないので, rsync が差分転送になっているとのご指摘をいただきました。
+    ただいま検証中ですので, rsync の速度比較結果については判断をお待ちください。 -> **再検証しました, 画面上部の再検証記事をご確認ください**
+- rsync は多機能 ~~かつ速い~~ ので rsync を使っていくのがよさそう
+
+## OpenSSH 公式が scp 非推奨宣言
+
+　今年の 5/3 に, こんなツイートを自分でしていました。
+
+<blockquote class="twitter-tweet"><p lang="ja" dir="ltr">&gt; なお開発チームはscpプロトコルは時代遅れで柔軟性がなく、修正が容易ではないとし、sftpやrsyncなどを使ってファイル転送することを奨励している。<br/><br/>知らなかった......sftpを使おう<br/><br/>「OpenSSH 8.0/8.0p」リリース、scpプロトコルに関連した脆弱性を修正 | OSDN Magazine <a href="https://t.co/FZdq7vIhYp">https://t.co/FZdq7vIhYp</a></p>&mdash; kangetsu121 (@kangetsu_121) <a href="https://x.com/kangetsu_121/status/1124138946785472512?ref_src=twsrc%5Etfw">May 3, 2019</a></blockquote> <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
+
+ssh, scp, sftp などのパッケージを含むソフトウェアである OpenSSH ですが, その公式自身が「scp を使うのは非推奨」と宣言していました。  
+自分はこれまで何の気なしに, 使い慣れておりかつよく見るコマンドである scp をリモートファイル転送に使っていましたが, 改めなければ, とこの時思っていました。
+
+しかしすっかりそんなことは忘れて scp を使い続けていたので, この機にこの件をもう少し調べて, sftp と rsync のより使いやすい方に移行しようと考え, この記事を書きました。
+
+## OpenSSH 8.0/8.0p1 (2019-04-17) Release Notes より
+
+　実際に OpenSSH のリリースノートの当該箇所を見てみましょう。  
+https://www.openssh.com/releasenotes.html から全文を確認できます。
+以下に, 一部抜粋します。
+
+> The scp protocol is outdated, inflexible and not readily fixed. We
+> recommend the use of more modern protocols like sftp and rsync for
+> file transfer instead.
+
+ここで,
+
+- scp は古く, 柔軟性に欠け, すぐに修正もされない
+- 代わりに sftp, rsync などを使うことを推奨
+
+とはっきり書いています。
+
+## 各コマンドの特徴
+
+　ところで, scp, sftp, rsync ですが, おおよそ以下のようなコマンドと認識しています。
+
+- `scp`: ssh を利用してセキュアにネットワーク越しにファイルコピー, 22番ポートを利用
+- `sftp`: ssh を利用してセキュアにネットワーク越しにファイル転送, 22番ポートを利用
+- `rsync`: ファイル, ディレクトリの同期に利用する, ネットワーク越しも可能
+
+前職でサーバーリプレースの際に, 直前まで rsync をかけて転送用データを同期していたのを覚えています。  
+このときはローカル内で完結していたのですが, ネットワーク越しの転送もできるんですね, 知らなかった...... (あるいは覚えてなかった)
+
+いろいろなサイトで比較はされていますが, 端的に言うと, scp はシンプルで軽い, sftp, rsync は多機能, といった評価が目立ちます。  
+実際, オプションの数をパッと見ると sftp, rsync の方が多そうですね。  
+また, scp は転送の中断ができないが, sftp, rsync は可能, といった評価も目立ちます。
+
+他に特徴的なことを書くと, sftp は基本インタラクティブなコマンドなので, sftp コマンドをシェルで打った後にさらに sftp 用の命令を入力, という感じになります。
+
+```text
+kangetsu@dev_persona:~$ sftp 192.168.134.5:/tmp/
+Connected to 192.168.134.5.
+Changing to: /tmp/
+sftp> put /tmp/test.txt
+```
+
+## 転送速度計測
+
+　では, 実際にそれぞれのコマンドを実行した際の転送速度を計測してみます。
+
+**注意!! Twitter でコメントをいただき, 転送ファイルの削除を都度していないので, rsync が差分転送になっているとのご指摘をいただきました。rsync の結果については判断をお待ちください。 -> 再検証しました, 画面上部の再検証記事をご確認ください**
+
+### 条件
+
+- VirtualBox 上の Ubuntu18 から Ubuntu16 にファイル転送
+- 利用ファイルは dd で作成した 1GB ファイル
+
+```text
+kangetsu@dev_persona:~$ dd if=/dev/zero of=/tmp/benchmark count=2000000
+2000000+0 records in
+2000000+0 records out
+1024000000 bytes (1.0 GB, 977 MiB) copied, 29.6042 s, 34.6 MB/s
+kangetsu@dev_persona:~$ ll /tmp/benchmark
+-rw-rw-r-- 1 kangetsu kangetsu 1024000000 Nov 4 11:48 /tmp/benchmark
+kangetsu@dev_persona:~$
+```
+
+- キャッシュ, 揺れを考慮して各コマンド初回実行時, 2~6 回目の実行時の平均値をそれぞれ使う
+- 初回実行時は `sync; echo 3 > sudo /proc/sys/vm/drop_caches` でキャッシュをクリアする[^1][^2]
+
+### SCP
+
+- 初回実行時
+
+```text
+kangetsu@dev_persona:~$ time scp /tmp/benchmark 192.168.134.5:/tmp/
+benchmark 100% 977MB 39.8MB/s 00:24
+real 0m25.350s
+user 0m8.194s
+sys 0m5.666s
+kangetsu@dev_persona:~$
+```
+
+**処理時間 25.35 s**
+
+- 2~6 回目実行時
+
+```text
+kangetsu@dev_persona:~$ for i in {1..5}; do time scp /tmp/benchmark 192.168.134.5:/tmp/ >/dev/null; done
+real 0m26.606s
+user 0m8.346s
+sys 0m6.412s
+real 0m24.795s
+user 0m8.459s
+sys 0m5.045s
+real 0m27.385s
+user 0m3.278s
+sys 0m15.485s
+real 0m25.953s
+user 0m6.389s
+sys 0m9.049s
+real 0m26.297s
+user 0m7.571s
+sys 0m6.707s
+kangetsu@dev_persona:~$
+```
+
+**処理時間平均 26.20 s**
+
+### SFTP
+
+- 初回実行時 (インタラクションなしで実行するために `-b` オプション利用)
+
+```text
+kangetsu@dev_persona:~$ time sftp -b sftp_batch.bat 192.168.134.5:/tmp/
+sftp> put /tmp/benchmark
+sftp> quit
+real 0m30.900s
+user 0m9.581s
+sys 0m7.763s
+kangetsu@dev_persona:~$
+```
+
+**処理時間 30.90 s**
+
+- 2~6 回目実行時
+
+```text
+kangetsu@dev_persona:~$ for i in {1..5}; do time sftp -b sftp_batch.bat 192.168.134.5:/tmp/ >/dev/null; done
+real 0m31.975s
+user 0m9.419s
+sys 0m7.985s
+real 0m31.929s
+user 0m9.483s
+sys 0m7.705s
+real 0m31.133s
+user 0m9.161s
+sys 0m8.420s
+real 0m32.139s
+user 0m9.301s
+sys 0m7.917s
+real 0m32.261s
+user 0m9.212s
+sys 0m7.964s
+kangetsu@dev_persona:~$
+```
+
+**処理時間平均 31.89 s**
+
+### RSYNC
+
+- 初回実行時
+
+```text
+kangetsu@dev_persona:~$ time rsync /tmp/benchmark 192.168.134.5:/tmp/
+real 0m15.419s
+user 0m6.734s
+sys 0m0.293s
+kangetsu@dev_persona:~$
+```
+
+**処理時間 15.42 s**
+
+- 2~6 回目実行時
+
+```text
+kangetsu@dev_persona:~$ for i in {1..5}; do time rsync /tmp/benchmark 192.168.134.5:/tmp/ >/dev/null; done
+real 0m16.030s
+user 0m6.638s
+sys 0m0.233s
+real 0m15.283s
+user 0m6.573s
+sys 0m0.277s
+real 0m15.686s
+user 0m6.500s
+sys 0m0.303s
+real 0m15.770s
+user 0m6.638s
+sys 0m0.318s
+real 0m15.841s
+user 0m6.598s
+sys 0m0.288s
+kangetsu@dev_persona:~$
+```
+
+**処理時間平均 15.72 s**
+
+## 結果発表
+
+　ということで, 私の手元での実験結果は次のようになりました。
+
+**scp, sftp, rsync 実行時間比較表 (単位: s)**
+
+|  | `scp` | `sftp` | `rsync` |
+| --- | --- | --- | --- |
+| **初回実行** | 25.35 | 30.90 | 15.42 |
+| **2~6 回平均** | 26.20 | 31.89 | 15.72 |
+
+sftp はインタラクションなどのオーバーヘッドもあるので遅いかなとは思っていたのですが, ~~rsync の圧倒的速さ。~~
+~~これはもう rsync を使うしかないですね。~~
+
+と言っても, この結果はあくまで今回の私の実験状況でのみ得られたものです。  
+小さい容量の大量ファイルを含むディレクトリの転送時や, 圧縮したファイルの転送時など, 条件が変われば速度も変わるかもしれませんので, そこはご留意ください。
+
+**注意!! Twitter でコメントをいただき, 転送ファイルの削除を都度していないので, rsync が差分転送になっているとのご指摘をいただきました。rsync の結果については判断をお待ちください。 -> 再検証しました, 画面上部の再検証記事をご確認ください**
+
+[^1]: [こちらの記事](https://keruuweb.com/ubuntu-%E3%83%A1%E3%83%A2%E3%83%AA%E3%82%92%E9%96%8B%E6%94%BE%E3%81%99%E3%82%8B/) を参考にさせていただきました
+[^2]: こちらのキャッシュクリアコマンドに誤りがあり, 適切にキャッシュクリアができていませんでした。修正して再計測を行った, 記事トップにリンクを記載した記事をご確認ください。なお, キャッシュクリア方法を修正しても結果に有意と言えそうな差はありませんでした

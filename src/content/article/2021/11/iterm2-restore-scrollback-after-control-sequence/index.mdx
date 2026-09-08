@@ -1,0 +1,22 @@
+---
+title: 'Mac iTerm2でコマンドインタラクションなどの後にスクロールバックできなくなった場合の設定の戻し方'
+description: 'iTerm2 で制御シーケンスによってスクロールバック履歴が消える設定にしてしまった場合に、元の挙動へ戻す設定方法を紹介します。'
+publishedAt: '2021-11-24'
+updatedAt: '2021-11-24'
+tags: ['iTerm2']
+---
+
+M1 Macbook pro にリプレースしてうきうきなのですが、 iTerm2 利用中、"A control sequence attempted to clear scrollback history. Allow this in the future?" というダイアログにちょっとつまづいたのでメモです。
+
+同じように困った人がいそうなので。
+
+## 問題
+
+![インタラクション](./iterm2-warning.png)
+
+"Always Allow" を選択すると、インタラクションから戻った後にインタラクション以前のコンソールの表示をスクロールしてさかのぼれなくなってしまう
+
+## 解決法
+
+- iTerm2 起動中の上のメニューから「Profiles」を選択し、「Open Profiles」>「Edit Profiles...」>「Advanced」>「Prevent CSI 3 J from clearing scrollback history?」を「Yes」にすればスクロールバックできるようになる
+- 右上の検索ボックスから「scrollback」などで検索すると楽 (検索場所を間違えると表示されないので注意)

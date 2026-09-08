@@ -1,0 +1,139 @@
+---
+title: 'JavaScript (ES6 対応) による CSV パーサの実装'
+description: 'Google Apps Script の Utilities.parseCsv では扱えなかったセル内改行を含む CSV を対象に、JavaScript ES6 で CSV パーサを実装します。'
+publishedAt: '2021-07-25'
+updatedAt: '2021-07-25'
+tags: ['JavaScript', 'Google Apps Script']
+---
+
+副業で Google Apps Script (GAS) を使っているのですが、CSV のパースに困っていました。  
+GAS には [`Utilities.parseCsv`](https://developers.google.com/apps-script/reference/utilities/utilities#parsecsvcsv) という CSV パーサがあるのですが, 本記事執筆時点で「同一セルに改行区切りで複数値が入っていても解釈できない」という仕様になっており、自分でパーサを実装する必要に迫られたためです。
+とは言え先人が (目的は違いますが) 実装を試みてくれており, 検索すれば JS の CSV パーサの実装は見つかります。  
+ただし今の私ではその実装を見てすぐに理解できなかったので, 今回はそのコードを ES6 対応にし, 処理が理解しやすいよう書き換えました。
+
+参考にさせていただいたコードは, Qiita に掲載されていた [weal さんの記事](https://qiita.com/weal/items/5aa94235c40d60ef2f0c) にあるものです (weal さん, ありがとうございました！)。
+
+結局このコードは実際に使う必要はなくなったのですが, 勉強になったし折角なのでここに供養します。
+
+## GAS の `Utilities.parseCsv` でパースできる・できない CSV の例
+
+つまり, GAS でパースできる CSV とパースできない CSV は以下の様になります。
+
+- **パースできる**:
+  - 単一セル単一値のもの
+  - 単一セル複数値だが "" で括ったもの
+- **パースできない**: 同一セルに改行区切りで複数値が入ったもの
+
+
+```js
+function parseCsvTest() {
+    const CSV1 = `col1,col2,col3
+foo,bar,aaa`;
+
+    const CSV2 = `col1,col2,col3
+foo,bar,"foos,bars"`;
+
+    const CSV3 = `col1,col2,col3
+foo,bar,"foos\nbars"`;
+
+    console.log(Utilities.parseCsv(CSV1));
+    console.log(Utilities.parseCsv(CSV2));
+    console.log(Utilities.parseCsv(CSV3));
+}
+```
+
+### 結果
+
+```js
+// CSV1
+[ [ 'col1', 'col2', 'col3' ], [ 'foo', 'bar', 'aaa' ] ]
+
+// CSV2
+[ [ 'col1', 'col2', 'col3' ], [ 'foo', 'bar', 'foos,bars' ] ]
+
+// CSV3
+[ [ 'col1', 'col2', 'col3' ],
+  [ 'foo', 'bar', 'foos' ],
+  [ 'bars"', '', '' ] ]
+```
+
+## 改行区切り複数値対応の CSV パーサの実装
+
+※詳細に検証したものではないので, 本コードの利用は自己責任でお願いします
+
+```js
+function parseMultiValuesCsv(csvStrings) {
+    // セルに改行コードを含むデータは Utilities.parseCsv() では parse できないため実装
+    // ref. https://qiita.com/weal/items/5aa94235c40d60ef2f0c
+    let i, c, r, q, v, j;
+    let rows = [], row = [];
+
+    const dataLen = csvStrings.length;
+    const retCode = csvStrings.indexOf('\r\n') === -1 ? (csvStrings.indexOf('\r') === -1 ? '\n' : '\r') : '\r\n';  // 改行コードを取得
+    const retCodeLen = retCode.length;
+
+    for (i = 0, c = r = -1; i < dataLen; i++) {
+        if (csvStrings.charAt(i) === '"') {  // quoted
+            for (j = 0, q = i + 1; q < dataLen; j++, q++) {  // 閉 quote を探す
+                let qIndex = csvStrings.indexOf('"', q);
+                q = qIndex === -1 ? dataLen + 1 : qIndex;  // quote の位置, 無いなら末尾まで
+                if (csvStrings.charAt(++q) !== '"') {
+                    break;  //  "" なら継続
+                }
+            }
+            row.push((v = csvStrings.substring(i + 1, (i = q) - 1), j) ? v.replace(/""/g, '"') : v);
+        } else {  // not quoted
+            if (c < i) {
+                let commaIndex = csvStrings.indexOf(',', i);
+                c = commaIndex === -1 ? dataLen : commaIndex;  // 直近のカンマ位置と
+            }
+            if (r < i) {
+                let retCodecIndex = csvStrings.indexOf(retCode, i);
+                r = retCodecIndex === -1 ? dataLen : retCodecIndex;  // 直近の改行位置を調べ
+            }
+            row.push(csvStrings.substring(i, (i = c < r ? c : r)));  // そこまでを値とする
+        }
+        if (i === r || retCode === (retCodeLen > 1 ? csvStrings.substr(i, retCodeLen) : csvStrings.charAt(i))) {
+            rows.push(row);
+            row = [];
+            i += retCodeLen - 1;
+        }
+    }
+
+    csvStrings.charAt(i - 1) === ',' && row.push('');  // , で終わる
+    row.length && rows.push(row);
+    return rows;
+}
+
+
+function parseCsvTest_orig() {
+    console.log(parseMultiValuesCsv(CSV1));
+    console.log(parseMultiValuesCsv(CSV2));
+    console.log(parseMultiValuesCsv(CSV3));
+}
+```
+
+### parseCsvTest_orig() 実行結果
+
+```js
+// CSV1
+[ [ 'col1', 'col2', 'col3' ], [ 'foo', 'bar', 'aaa' ] ]
+// CSV2
+[ [ 'col1', 'col2', 'col3' ], [ 'foo', 'bar', 'foos,bars' ] ]
+// CSV3
+[ [ 'col1', 'col2', 'col3' ], [ 'foo', 'bar', 'foos\nbars' ] ]
+```
+
+## 最後に
+
+冒頭に書いた通り, このコードは weal さんの実装を ES6 対応にし, 処理の流れを追いやすいよう書き換えただけのものです (書き換えの過程で私の理解不足で破壊してしまったところもあるかもしれません)。  
+ただ GAS での CSV パースに私と同じように苦しんだ方もいるかなと思い, 記事を残しておきます[^1]。
+
+繰り返しますが, コードの利用は自己責任でお願いします。  
+自分でパーサの実装は極力したくない[^2]ので, GAS に同一セル改行区切り複数値対応の CSV パーサが早く実装されることを願っています[^3]。
+
+[^1]: パフォーマンスを追求するなら微差かもしれないけど元の weal さんのものの方が短い分よいかもしれません
+
+[^2]: 複雑な処理実装にはバグがたくさん入り込みやすいし, 仕様変更時などのメンテは非常につらいので、ちゃんとテスト・メンテされているものがあればそれを使うことに越したことはない
+
+[^3]: 今思ったら, これは CSV 側を低コストで加工できるならそっちの方が楽そう。自動化とか考えると結局面倒そうではありますが

@@ -1,0 +1,336 @@
+---
+title: 'ShellScript Tips --変数--'
+description: 'ShellScript の変数について、${} の使い方、配列、ダブルクォートによる展開や glob の防止など、安全に扱うための基本を整理します。'
+publishedAt: '2020-03-29'
+updatedAt: '2020-03-29'
+tags: ['Linux']
+---
+
+現職ではインフラ系の QA をしています。扱うものはコマンドラインツールがほとんどなので, 自動試験なども ShellScript で組むことが多いです。現職からまともに触るようになったのですが, いろいろと不思議な挙動に悩まされ, また無知ゆえの無駄な記述もいろいろしてきました。その中で溜まった知見を整理しておきます。
+
+今回は表題の通り, 主に変数について書きます。
+
+## ShellScript の変数
+
+　ShellScript の変数は, **`変数名=値`** のかたちで宣言します。このとき, **`=` の前後にスペースがあってはいけません**。
+
+ここは基本なのでよいですが, 問題になるのは **変数を参照する方法** です。
+
+私が知る限りでは, 変数参照の記法は 3段階あるので, 1つずつ見ていきます。
+
+### $ のみ
+
+　一番シンプルな方法で, 参照したい変数名の頭に `$` をつけるだけです。
+
+```bash
+#!/bin/bash
+VAR=hoge
+echo $VAR
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:26:07]
+$ bash tips1.sh
+hoge
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:26:10]
+```
+
+### ${}
+
+`$` を付ければ参照ができました。では次のようなケースはどうでしょうか。  
+変数名を prefix とするファイルを作成したい場合です。
+
+```bash
+#!/bin/bash
+VAR=hoge
+echo $VAR
+echo hogehoge > $VAR_file # hogehoge という内容を持つ hoge_file というファイルを作成したい
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:31:36]
+$ ls
+tips1.sh
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:37:11]
+$ bash tips1.sh
+hoge
+tips1.sh: line 7: $VAR_file: ambiguous redirect
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:37:19]
+$ ls
+tips1.sh
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:37:32]
+```
+
+`ambiguous redirect` というエラーメッセージが出て, 作成できませんでした。
+`echo` して変数の中身を見てみます。
+
+```bash
+#!/bin/bash
+VAR=hoge
+echo $VAR
+echo $VAR_file
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 12:37:32]
+$ bash tips1.sh
+hoge
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 14:55:23]
+```
+
+2回 `echo` していますが, `echo $VAR` しか表示されていません。  
+`echo $VAR_file` の部分では, 空白行が表示されています。  
+つまり, もう気づいているかもしれませんが, `$VAR_file` は **`$VAR_file` 全部で 1つの変数名と解釈されており, `$VAR_file` という変数は定義されていないので空となっている** ということです。
+
+これを避けるためには, **変数を `{}` で囲み, 変数名の区切りを明示する** 必要があります。
+
+```bash
+#!/bin/bash
+VAR=hoge
+echo $VAR
+echo hogehoge > ${VAR}_file
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:05:04]
+$ ls
+tips1.sh
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:05:07]
+$ bash tips1.sh
+hoge
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:05:11]
+$ ls
+hoge_file tips1.sh
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:05:13]
+```
+
+#### 配列参照時は `{}` は必須
+
+もっと実用的なケースだと, 配列を変数に格納している場合は, より `{}` を使う必要があります。
+
+```bash
+#!/bin/bash
+ARRAY1=(aa bb cc)
+echo $ARRAY1
+echo $ARRAY1[@]
+echo $ARRAY1[1]
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:18:09]
+$ bash shell_tips3.sh
+aa
+aa[@]
+aa[1]
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:21:47]
+```
+
+このように, `{}` を使わないと配列の 0番目の要素のみが展開され, インデックスを示すはずの `[1]` などは文字列として解釈され, 結合されてしまっています。  
+これを回避するために, インデックスを含めて `{}` で囲みます。
+
+```bash
+#!/bin/bash
+ARRAY1=(aa bb cc)
+echo ${ARRAY1}
+echo ${ARRAY1[@]}
+echo ${ARRAY1[1]}
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:21:47]
+$ bash shell_tips4.sh
+aa
+aa bb cc
+bb
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 15:24:24]
+```
+
+#### まとめ: 原則変数は `{}` で囲む
+
+　このように, `{}` は使っても特に悪さをせず, 使わないと意図しない挙動になることがあります。  
+少なくとも **`{}` で変数を囲むことで, 「どこからどこまでが変数名かを明示できる」ので, 誤解の余地は減り, コードも追いやすくなります**。  
+これを使って困る挙動は今のところ私は寡聞にして聞いたことがないので, 原則変数は `{}` で囲むのが良いと思います。
+
+### "${}"
+
+　最後は, `${}` を `""` で囲むパターンです[^1]。
+
+#### 配列を "" で囲む必要性
+
+これも, 基本的には配列などの挙動に影響を与えるものです。次のコードを見てみます。
+
+```bash
+#!/bin/bash
+ARRAY1=("Lorem ipsum dolor sit amet," "consectetur adipiscing elit," "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.")
+echo -e '\necho ${ARRAY1[@]}'
+echo ${ARRAY1[@]}
+echo -e '\nfor i in "${ARRAY1[@]}"; do echo ${i}; done'
+for i in ${ARRAY1[@]}
+do
+echo ${i}
+done
+```
+
+分かりやすさのために, 実行するコマンドを `echo -e` で直前に出力しています。  
+配列 `ARRAY1` には 3要素格納しているので, `for` の処理では 3行の出力があることを期待しています。  
+これを実行します。
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 16:20:26]
+$ bash shell_tips5.sh
+echo ${ARRAY1[@]}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+for i in "${ARRAY1[@]}"; do echo ${i}; done
+Lorem
+ipsum
+dolor
+sit
+amet,
+consectetur
+adipiscing
+elit,
+sed
+do
+eiusmod
+tempor
+incididunt
+ut
+labore
+et
+dolore
+magna
+aliqua.
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 16:22:08]
+```
+
+3要素のつもりが, スペースで区切られて単語分改行して出力されてしまいました。  
+この例では単なる `echo` なので被害は少ないですが, 出力した要素を使ってファイルを作ったり, 削除したり, その他何らかの更新系の処理をしようとしていた場合, 大惨事になる場合もあります。
+
+これを防ぐために, 変数を `""` で囲み, `IFS (Internal Field Separator)`[^2] で区切られることを防ぎます。
+
+```bash
+#!/bin/bash
+ARRAY1=("Lorem ipsum dolor sit amet," "consectetur adipiscing elit," "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.")
+echo -e '\necho ${ARRAY1[@]}'
+echo "${ARRAY1[@]}"
+echo -e '\nfor i in "${ARRAY1[@]}"; do echo ${i}; done'
+for i in "${ARRAY1[@]}"
+do
+echo ${i} # "" が必要な箇所を区別するためあえて "" を付けていない
+done
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 16:59:33]
+$ bash shell_tips5.sh
+echo ${ARRAY1[@]}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+for i in "${ARRAY1[@]}"; do echo ${i}; done
+Lorem ipsum dolor sit amet,
+consectetur adipiscing elit,
+sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:08:07]
+```
+
+このように, 変数の要素が意図せず `IFS` で区切られることを防ぐには, 変数を `""` で囲む必要があります。
+
+#### glob 展開を防ぐために "" で囲む必要性
+
+　さらに, もっと恐ろしいケースがあります。  
+UNIX 系 OS では, `*` をワイルドカードとし, ファイル名の展開などを行う `glob` と呼ばれるパターンがあります。  
+例えば以下の例では, カレントディレクトリの `.sh` で終わるファイルを表示しています。
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:17:04]
+$ ls *.sh
+shell_tips2.sh shell_tips3.sh shell_tips4.sh shell_tips5.sh shell_tips6.sh tips1.sh
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:17:07]
+```
+
+これがシェルスクリプトの変数と組み合わさったとき, 理解しないまま使っていると恐ろしい事故を引き起こします。  
+ここまでの説明で予想はついていると思いますが, 以下の例を見てみます。
+
+```bash
+#!/bin/bash
+VAR="* is called asterisk, this is used on UNIX system as wildcard"
+echo -e '\necho ${VAR}'
+echo ${VAR}
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:17:07]
+$ bash shell_tips6.sh
+echo ${VAR}
+hoge_file shell_tips2.sh shell_tips3.sh shell_tips4.sh shell_tips5.sh shell_tips6.sh target tips1.sh is called asterisk, this is used on UNIX system as wildcard
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:21:25]
+```
+
+変数 `VAR` に格納した文字列を表示したかっただけなのに, `echo ${VAR}` の後に何やら余計なものまで出ています。  
+何が起きたかというと, **変数 `VAR` 中の `*` が glob 展開され, カレントディレクトリに存在する全てのファイルとなり**, それらが `echo` された, という状態です。
+
+配列の時と同じように, もしこれが `echo` でなく, 更新系のコマンドの引数として渡されていたら......大惨事になります。
+
+これを防ぐ方法も, 変数を `""` で囲んでやることです。
+
+```bash
+#!/bin/bash
+VAR="* is called asterisk, this is used on UNIX system as wildcard"
+echo -e '\necho ${VAR}'
+echo "${VAR}"
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:26:55]
+$ bash shell_tips7.sh
+echo ${VAR}
+* is called asterisk, this is used on UNIX system as wildcard
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 17:27:41]
+```
+
+このように `""` で囲むことで, `*` がワイルドカードという特殊文字として展開されず, 文字列として表示されました。
+
+#### まとめ: 変数は原則 "" で囲む
+
+　意図的に配列変数内の要素を `IFS` で区切りたい場合や, 意図的に `*` を利用する場合はともかく, 上で紹介したような意図しない挙動を防ぐためにも, 原則変数は `""` で囲むことをお勧めします[^3]。
+
+## "" と '' の使い分け
+
+　最後に, シングルクォート `''` について書いておきます。
+
+これまで, サンプルでは変数を全て `""` で囲んできました。  
+これには理由があり, ShellScript では, **`""` で囲んだ変数 (や `*`) は展開され, `''` で囲んだ場合は展開されない** という挙動となるためです。
+
+```bash
+#!/bin/bash
+VAR=hoge
+echo '${VAR}'
+echo 'Is this * expanded?'
+```
+
+```text
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 18:34:07]
+$ bash shell_tips8.sh
+${VAR}
+Is this * expanded?
+[kangetsu@ubuntu16 shell_tips Sun Mar 29 18:51:33]
+```
+
+普段はあえてシングルクォートを使うケースはないと思います。  
+上で紹介しているサンプルコードでは, 「この変数をここで echo します」ということを示すために `echo -e '\necho ${VAR}'` という形で利用していました。  
+しかし, 普段はめったに利用シーンはないと思うので, **変数は原則ダブルクォートで囲んで使う** と覚えておけばよいと思います。
+
+## まとめ
+
+　意外と長くなったため, 今回は変数のみに焦点を当てました。  
+最後に, まとめを書いておきます。  
+ShellScript は運用の自動化などでよく使われますが, コードの可読性・保守性を保ち, 意図しない大事故を引き起こさないために, 今回の内容は役立つと思います。
+
+ShellScript における変数利用まとめ
+
+1. 変数の区切りを明示するために変数を ${} で囲む
+2. 配列, glob 展開で意図しない動作を起こさないよう "" で変数を囲む (`"${VAR}"`)
+3. '' で変数を囲むと展開されない, 基本使わなくてよい
+
+[^1]: 正確には {} なしで "" で囲むパターンもある
+[^2]: 区切り文字を示す環境変数, bash では space, tab, 改行が設定されているらしい
+[^3]: ここでは紹介しませんが, "" で囲むことでかえって意図しない挙動となるケースも存在します。そうしたときに "" を使わないという判断は, 挙動を理解し, 検証ができている場合は問題ないです。

@@ -1,0 +1,215 @@
+---
+title: 'systemctl disable sshd.service したら sshd を起動できなくなった話'
+description: 'systemctl disable sshd.service 後に SSH デーモンを起動できなくなった事例から、systemd の Unit、Alias、enable・disable の仕組みを調べます。'
+publishedAt: '2020-05-01'
+updatedAt: '2020-05-01'
+tags: ['Linux']
+---
+
+Linux の勉強を体系的にしようと思って, LPIC の勉強をしてます。  
+systemctl の勉強中, 実際にいくつかコマンドを実行して結果を見ようと思い, `systemctl disable sshd.service` を実行したら, **sshd.service の Unit ファイルが消えて操作できなくなりました**。
+
+<blockquote class="twitter-tweet"><p lang="ja" dir="ltr">Linux 勉強中 sudo systemctl disable sshd.service を実行<br/>シンボリックリンクが消えると期待したら実ファイルが消え enable もできなくなった<br/>別 VM で調査したら sshd.service は ssh.service と実質同じと分かったので Unit ファイルコピーで復旧<br/>変に時間かけた...disable は迂闊に打てないもの？</p>&mdash; kangetsu121 (@kangetsu_121) <a href="https://x.com/kangetsu_121/status/1255427151630925824?ref_src=twsrc%5Etfw">April 29, 2020</a></blockquote> <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
+
+※このツイート時点では検証できてないので, ツイート中には不正確な推測が入ってます
+
+正しく復旧するには systemd Unit ファイルの知識が必要で, 原因がちょっとコーナーケースじみていておもしろかったので記録しておきます。
+
+なお, 動作環境は VirtualBox 上の Ubuntu 18.04.4 LTS です。
+
+```text
+kangetsu@ubuntu18:~$ uname -a
+Linux ubuntu18 4.15.0-99-generic #100-Ubuntu SMP Wed Apr 22 20:32:56 UTC 2020 x86_64 x86_64 x86_64 GNU/Linux
+kangetsu@ubuntu18:~$
+```
+
+## systemctl disable と enable の機能
+
+そもそも `systemctl disable` と `systemctl enable` は何かと言うと, **システム起動時のサービスの自動起動設定の有効・無効化** を行うコマンドです。  
+今回検証の白羽の矢が立った `sshd.service` は, enable されていないと困る筆頭です。  
+もし `sshd.service` の自動起動が無効化されていたら, システムメンテナンスでパッケージアップグレードなどして再起動した後, **ssh 以外の手段でログインした後に手動で sshd.service の起動をしないと ssh できなくなってしまいます**。
+
+なお, 自動起動の有効状態は, `systemctl status` や `systemctl is-enabled` で確認できます。
+
+## systemctl disable で何が起きたか
+
+disable コマンド実行時のログを引用します。
+
+```text
+kangetsu@ubuntu18:~$ sudo systemctl disable sshd.service
+[sudo] password for kangetsu:
+Removed /etc/systemd/system/sshd.service.
+Removed /etc/systemd/system/multi-user.target.wants/ssh.service.
+kangetsu@ubuntu18:~$
+```
+
+原因が分かった今だから気づけるのですが, このログをよく見ると, **`sshd.service` を disable したにもかかわらず `/etc/systemd/system/multi-user.target.wants/ssh.service` が削除** されています。  
+`sshd` ではなく `ssh` です。
+
+ここが今回の重要な点でした。
+
+### systemctl enable で元に戻そうとしたら戻らない
+
+disable の挙動が確認できたので, 元に戻そうと思って `systemctl enable sshd.service` と実行しました。すると,
+
+```text
+kangetsu@ubuntu18:~$ sudo systemctl enable sshd.service
+Failed to enable unit: Unit file sshd.service does not exist.
+kangetsu@ubuntu18:~$
+```
+
+このように `Failed` の文字が。  
+`sshd.service` という Unit ファイルが存在しないと。
+
+不審に思ってログを見ましたが, 上にある通り `Removed` と書いてあるので, disable コマンドで Unit ファイルが削除されたのだと思いました。  
+この段階で, `sshd.service` を引数にした `systemctl` のどのコマンドも実行できなくなっていました。
+
+ここで, 勉強したての記憶から, 「Unit ファイルのオリジナルは `/lib/systemd/system` 配下にある」という情報を思い出し, 確認しました[^1]。  
+しかし, `/lib/systemd/system/sshd.service` は見つかりませんでした。  
+さらに `find` で `sshd.service` という Unit ファイルを探しても, 何も見つかりませんでした。
+
+「disable は可逆じゃないのか？　オリジナルの Unit ファイルも消すのか？[^2]」と驚き, 「disable は迂闊に実行できないのか」というツイートにつながっています[^3]。
+
+## オリジナルの Unit ファイルを確認する
+
+ssh できなくなるのは困るので, 別の VM を起ち上げてその VM で `sshd.service` の Unit ファイルを `systemctl cat` で確認しました。
+
+```text
+kangetsu@dev_persona:~$ systemctl cat sshd.service
+# /lib/systemd/system/ssh.service
+[Unit]
+Description=OpenBSD Secure Shell server
+After=network.target auditd.service
+ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
+[Service]
+EnvironmentFile=-/etc/default/ssh
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D $SSHD_OPTS
+ExecReload=/usr/sbin/sshd -t
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=notify
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+[Install]
+WantedBy=multi-user.target
+Alias=sshd.service
+kangetsu@dev_persona:~$
+```
+
+最悪これをコピーしようと考えながら, 次に元の VM では disable 時に削除されてしまった `/etc/systemd/system/sshd.service` を確認しました。すると,
+
+```text
+kangetsu@dev_persona:~$ ll /etc/systemd/system/sshd.service
+lrwxrwxrwx 1 root root 31 Apr 30 00:55 /etc/systemd/system/sshd.service -> /lib/systemd/system/ssh.service
+kangetsu@dev_persona:~$
+```
+
+このように, `ssh.service` へのシンボリックリンクであることが分かりました。  
+ちゃんと理解していたらこの段階で真相がわかったのでしょうが, この時私は「disable 前には `/lib/systemd/system/sshd.service` という Unit ファイルがあったはず」と思い込んでいたので, この情報を見て「`ssh.service` へのシンボリックリンクなら, `systemctl cat sshd.service` とこれの diff を取って, `/lib/systemd/system/sshd.service` を作ればいい」などと考えていました。  
+こっちの VM にも `/lib/systemd/system/sshd.service` なんてないのだから, 慌てて混乱していたのが分かります。
+
+diff は以下の通りでした。
+
+```diff
+# kangetsu@dev_persona:~$ diff <(systemctl cat sshd.service) /lib/systemd/system/ssh.service
+1d0
+< # /lib/systemd/system/ssh.service
+```
+
+コメントしか差分がないなら, `/lib/systemd/system/ssh.service` を `/lib/systemd/system/sshd.service` としてコピーすれば enable できるようになるはず！　と考えて, 元の VM に戻ってその通り実行しました。  
+すると, 今度は enable でき, `sshd.service` を `systemctl` で操作できるようになりました。
+
+<blockquote class="twitter-tweet"><p lang="ja" dir="ltr">同じイメージで構築した VM で確認、なるほど<br/><br/>そもそも /lib/systemd/system/sshd.service はなく、/etc/systemd/system/sshd.service は /lib/systemd/system/ssh.service へのシンボリックリンクだった<br/><br/>/etc 以下の ssh.service と sshd.service にコメント以外 diff がないのも納得 <a href="https://t.co/5go87F2MhF">pic.twitter.com/5go87F2MhF</a></p>&mdash; kangetsu121 (@kangetsu_121) <a href="https://x.com/kangetsu_121/status/1255440718090420225?ref_src=twsrc%5Etfw">April 29, 2020</a></blockquote> <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
+
+## 真相: Unit ファイルの Alias
+
+これで昨日は安眠したのですが, せっかくだし記録に残しておこうと思って昨夜と今朝, この記事を書いてました。  
+改めて Unit ファイルの確認などしていたところ, **`ssh.service` の Unit ファイルに `Alias=sshd.service` という記述がある** ことに気づきました[^4]。
+
+```text
+kangetsu@ubuntu18:~$ systemctl cat ssh.service
+# /lib/systemd/system/ssh.service
+[Unit]
+Description=OpenBSD Secure Shell server
+After=network.target auditd.service
+ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
+[Service]
+EnvironmentFile=-/etc/default/ssh
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D $SSHD_OPTS
+ExecReload=/usr/sbin/sshd -t
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=notify
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+[Install]
+WantedBy=multi-user.target
+Alias=sshd.service
+kangetsu@ubuntu18:~$
+```
+
+つまり, 最初から `/lib/systemd/system/sshd.service` なんて存在しなかったのです。
+`ssh.service` の別名として `sshd.service` が指定されていたので, disable 後に復旧したかったら `systemctl enable ssh.service` でよかったのでした。
+
+```text
+kangetsu@dev_persona:~$ sudo systemctl enable ssh.service
+Synchronizing state of ssh.service with SysV service script with /lib/systemd/systemd-sysv-install.
+Executing: /lib/systemd/systemd-sysv-install enable ssh
+Created symlink /etc/systemd/system/sshd.service → /lib/systemd/system/ssh.service.
+kangetsu@dev_persona:~$
+```
+
+これで, `sshd.service` というシンボリックリンクが作成され, `systemctl` で `sshd.service` を操作できるようになりました。
+
+```text
+kangetsu@ubuntu18:~$ ll /etc/systemd/system/sshd.service
+lrwxrwxrwx 1 root root 31 Apr 30 11:08 /etc/systemd/system/sshd.service -> /lib/systemd/system/ssh.service
+kangetsu@ubuntu18:~$
+```
+
+`sshd.service` は `ssh.service` の単なるエイリアスで, 実体は同じ `ssh.service` なので, この状態だと `ssh.service` も `sshd.service` も起動しています。
+
+```text
+kangetsu@ubuntu18:~$ systemctl is-active ssh.service
+active
+kangetsu@ubuntu18:~$ systemctl is-active sshd.service
+active
+kangetsu@ubuntu18:~$
+```
+
+daemon ということを強調するためにわざわざ `sshd.service` という名前にしているのでしょうか。  
+systemd Unit なら `sshd.service` だけでよいのでは, とも思いますが, 何か理由があるのでしょうか。  
+ご存じの方は是非教えていただけると嬉しいです。
+
+## 結論
+
+- `systemctl disable` は必ずしも可逆じゃないので注意
+- 特に Unit を編集してもいないのに `systemctl enable` できなくなったら, `/lib/systemd/system` 以下のファイルを `Alias=` で `grep` すると見つかるかも
+
+## おまけ
+
+systemd の Unit ファイルは, `/lib/systemd/system` や `/usr/lib/systemd/system` 以下に格納されます。  
+それらを変更したいときは直接編集するのではなく, `/etc/systemd/system` 以下に編集した Unit ファイルを置くようにするようです。
+
+[RedHat 公式の説明の表](https://access.redhat.com/documentation/ja-jp/red_hat_enterprise_linux/7/html/system_administrators_guide/chap-Managing_Services_with_systemd#tabl-Managing_Services_with_systemd-Introduction-Units-Locations)を以下引用します[^5]。
+
+| ディレクトリー | 詳細 |
+| --- | --- |
+| /usr/lib/systemd/system/ | インストール済みの RPM パッケージで配布された systemd unit ファイル |
+| /run/systemd/system/ | ランタイム時に作成された systemd unit ファイル。このディレクトリーは、インストール済みのサービス unit ファイルのディレクトリーに優先します。 |
+| /etc/systemd/system/ | systemctl enable で作成された systemd unit ファイルおよびサービス拡張向けに追加された unit ファイル。このディレクトリーは、runtime unit ファイルのディレクトリーに優先します。 |
+
+オリジナルと設定を変えていないなら, 同じ内容のファイルを複製するのも効率が悪いのでオリジナルへのシンボリックリンクを張っているようです。  
+systemd が参照する Unit ファイルは `/etc/systemd/system` 以下のファイルを基本的に参照するようです。
+
+[^1]: おまけで, この仕様に関する RedHat のドキュメントを紹介しています
+[^2]: 今だから思いますが, disable 時のログには /lib 以下のファイルを削除したというログはないのもヒントになり得ました
+[^3]: そんなことあるか？　だとしたら設計ミスでは？　バグ？　などとこのときは釈然としない気持ちでした
+[^4]: alias は .bashrc などにもよく書きますよね。ll と打ったら ls -la が実行されるように, 別名を付けるようなものです
+[^5]: Ubuntu とはディストリビューションが異なるので微妙にディレクトリなど異なります

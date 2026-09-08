@@ -66,3 +66,29 @@
   height: auto;
   margin-inline: auto;
 }
+
+.prose .footnotes {
+  padding-block-start: 1rem;
+  margin-block-start: 2.5rem;
+  border-block-start: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.prose .footnotes ol {
+  padding-inline-start: 1.5rem;
+  margin-block: 0.75rem 0;
+}
+
+.prose .footnotes li {
+  margin-block: 0.25rem;
+}
+
+.prose .footnotes p {
+  margin-block: 0.25rem;
+}
+
+.prose [data-footnote-backref] {
+  margin-inline-start: 0.25rem;
+}

@@ -1,0 +1,108 @@
+---
+title: 'dig コマンドで名前解決が再帰的に行われる様子を確認する'
+description: 'dig コマンドを使って DNS の名前解決をたどり、ルート DNS から権威 DNS まで再帰的に名前が解決される流れを確認しました。'
+publishedAt: '2019-08-05'
+updatedAt: '2019-08-05'
+tags: ['ネットワーク', 'Linux']
+---
+
+[先日のエントリ](/2019/08/how-networks-work-chapter-1/)で, 「名前解決は世界中の DSN サーバが協力して, 階層的・再帰的に行われる」と書きました。  
+まずスタブリゾルバがキャッシュ DNS サーバに問い合わせ, そこでキャッシュなどで解決できない場合に今度はキャッシュ DNS サーバがフルリゾルバとして権威 DNS サーバに順にたらい回しされて問い合わせていくのでした。
+
+　ここでは, 文字だけではわかりづらいので, 実際に名前解決が再帰的に行われる様子を見てみます。  
+名前解決には, Linux では `dig` コマンド[^1]が使えるので, この結果を簡単にですが読み解いてみます。
+
+調査に使った環境情報は以下の通りです。  
+VirtualBox に立てた Ubuntu を利用しています。
+
+```text
+[kangetsu@ubuntu16 ~ Mon Aug 05 22:04:51]
+$ uname -a
+Linux ubuntu16 4.4.0-157-generic #185-Ubuntu SMP Tue Jul 23 09:17:01 UTC 2019 x86_64 x86_64 x86_64 GNU/Linux
+[kangetsu@ubuntu16 ~ Mon Aug 05 22:17:18]
+```
+
+## dig で www.google.com を再帰的に解決した結果
+
+　では, dig で www.google.com の名前解決をしてみます。  
+`+trace` オプションを使うことで再帰的な解決の様子を追えるので, このオプションを使います。  
+なお, 今回は見たいものに焦点化するため, 以下の結果では NS (NameServer), A レコード以外は `......` と表記して省略しています。
+
+```text
+[kangetsu@ubuntu16 ~ Sun Aug 04 22:20:46]
+$ dig www.google.com +trace
+; <<>> DiG 9.10.3-P4-Ubuntu <<>> www.google.com +trace
+;; global options: +cmd
+. 218961 IN NS k.root-servers.net.
+. 218961 IN NS l.root-servers.net.
+. 218961 IN NS b.root-servers.net.
+. 218961 IN NS m.root-servers.net.
+. 218961 IN NS f.root-servers.net.
+. 218961 IN NS e.root-servers.net.
+. 218961 IN NS c.root-servers.net.
+. 218961 IN NS a.root-servers.net.
+. 218961 IN NS g.root-servers.net.
+. 218961 IN NS i.root-servers.net.
+. 218961 IN NS d.root-servers.net.
+. 218961 IN NS h.root-servers.net.
+. 218961 IN NS j.root-servers.net.
+......
+;; Received 1097 bytes from 192.168.2.1#53(192.168.2.1) in 7 ms
+com. 172800 IN NS e.gtld-servers.net.
+com. 172800 IN NS d.gtld-servers.net.
+com. 172800 IN NS l.gtld-servers.net.
+com. 172800 IN NS f.gtld-servers.net.
+com. 172800 IN NS b.gtld-servers.net.
+com. 172800 IN NS j.gtld-servers.net.
+com. 172800 IN NS c.gtld-servers.net.
+com. 172800 IN NS i.gtld-servers.net.
+com. 172800 IN NS g.gtld-servers.net.
+com. 172800 IN NS a.gtld-servers.net.
+com. 172800 IN NS h.gtld-servers.net.
+com. 172800 IN NS m.gtld-servers.net.
+com. 172800 IN NS k.gtld-servers.net.
+......
+;; Received 1174 bytes from 192.112.36.4#53(g.root-servers.net) in 196 ms
+google.com. 172800 IN NS ns2.google.com.
+google.com. 172800 IN NS ns1.google.com.
+google.com. 172800 IN NS ns3.google.com.
+google.com. 172800 IN NS ns4.google.com.
+......
+;; Received 776 bytes from 192.42.93.30#53(g.gtld-servers.net) in 162 ms
+www.google.com. 300 IN A 172.217.25.228
+;; Received 59 bytes from 216.239.32.10#53(ns1.google.com) in 96 ms
+[kangetsu@ubuntu16 ~ Sun Aug 04 22:21:12]
+```
+
+上から順に `;;` の区切りずつ見てみましょう。
+
+まず初めに, `.`, すなわちルートドメインを知るネームサーバ, ルートサーバが解決されています。  
+ここの NS レコードが 13 あり, すなわちルートサーバが 13 あることが分かります。
+それぞれ `{a..m}.root-servers.net.` という名前のようです。  
+ちなみに, `Received 1097 bytes from 192.168.2.1#53(192.168.2.1) in 7 ms` とあるのは, 192.168.2.1 の機器の 53番ポート[^2]がこの結果を返してくれたことを表しています。  
+わたしの場合は, これはわたしが使っているルータです[^3]。
+
+次に, `com.` を知るネームサーバも 13 返ってきています。  
+`{a..m}.gtld-servers.net.` というサーバのようです。  
+なお, gTLD は generic Top-Level Domain を表しており, 分野別のトップレベルドメインを意味するらしいです[^4]。  
+この回答は, `Received 1174 bytes from 192.112.36.4#53(g.root-servers.net) in 196 ms` とある通り, 先ほどのルートサーバの内 `g.root-servers.net` が返してくれたようです。
+
+次は `google.com.` です。  
+ここまでくると, 一企業レベルの管理ですね。  
+ルートやトップレベルドメインと異なり, ネームサーバの数も 4 になっています (それでも多いのかもしれませんが)。  
+これまでとほぼ同じなので割愛します。
+
+最後に, ようやく `www.google.com` の A レコードが返ってきています。  
+`www.google.com` の IP アドレスが `172.217.25.228` である, という, 当初知りたかった答えが返ってきましたね。  
+実際に, ブラウザのアドレスバーにこの IP アドレスを入力してリクエストを送ると, www.google.com をリクエストしたときと同じく, Google のページが表示されます。
+
+## まとめ
+
+　以上となります。  
+改めてまとめるほどの内容はありませんが, 確かに `dig +trace` を使うことで, 名前解決が再帰的に行われている様子を確認することができました。  
+こんな感じで, 気になったことは実際に手を動かして確かめていきたいです。
+
+[^1]: 英単語の dig (掘る) とは関係なく, Domain Information Groper の略だそうです
+[^2]: DNS の well known port は 53です。AWS の DNS サービスの名前も "ルート53" ですね
+[^3]: dig -x $IP で逆引きもできます
+[^4]: ref. https://wepicks.net/itglossary-gtld/ など

@@ -1,0 +1,202 @@
+---
+title: 'strace と netstat で socket の様子を見てみる'
+description: 'strace と netstat を使ってプロセスのシステムコールや Socket の状態を観察し、Linux 上で通信が行われる様子を確認します。'
+publishedAt: '2019-08-22'
+updatedAt: '2019-08-22'
+tags: ['ネットワーク', 'Linux']
+---
+
+『ネットワークはなぜつながるのか』[第二章](/2019/08/how-networks-work-chapter-2/)では, アプリから OS プロトコルスタックにデータ送信の依頼を出し, 実際に socket を作成してデータを送信するところまでの流れを概観していました。
+
+ここでは, その流れに出てくる登場人物のひとつ, **socket** の作成とその動作を, systemcall[^1] を追いかけて表示する `strace` と, socket の状態を表示する `netstat` を使って簡単に確認してみます。
+
+環境情報は変わらず VirtualBox 上の Ubuntu 16。
+
+```text
+[kangetsu@ubuntu16 ~ Thu Aug 22 21:13:15]
+$ uname -a
+Linux ubuntu16 4.4.0-157-generic #185-Ubuntu SMP Tue Jul 23 09:17:01 UTC 2019 x86_64 x86_64 x86_64 GNU/Linux
+[kangetsu@ubuntu16 ~ Thu Aug 22 21:35:52]
+```
+
+## `strace` で systemcall を追う
+
+　まず, `strace` コマンドで, Web サーバに HTTP リクエストを送ったときにどんな systemcall が呼び出されているのか, 実際に確認してみいます。  
+ここでは, コマンドラインで HTTP リクエストを送れる `curl` コマンドを使います。
+また, そのままだと表示量が膨大になるため, `strace` は `-e trace=network` オプションでネットワーク系の systemcall のみに, `curl` は `-sI` オプションで表示を絞ります。  
+例によって, www.google.com に GET リクエストを投げ, その時の様子を観察してみます。
+
+```text
+[kangetsu@ubuntu16 ~ Thu Aug 22 21:38:11]
+$ strace -e trace=network curl -sI https://www.google.com
+socket(PF_INET6, SOCK_DGRAM, IPPROTO_IP) = 4
+socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) = 4
+setsockopt(4, SOL_SOCKET, SO_KEEPALIVE, [1], 4) = 0
+setsockopt(4, SOL_TCP, TCP_KEEPIDLE, [60], 4) = 0
+setsockopt(4, SOL_TCP, TCP_KEEPINTVL, [60], 4) = 0
+connect(4, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("172.217.161.68")}, 16) = -1 EINPROGRESS (Operation now in progress)
+getsockopt(4, SOL_SOCKET, SO_ERROR, [0], [4]) = 0
+getpeername(4, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("172.217.161.68")}, [16]) = 0
+getsockname(4, {sa_family=AF_INET, sin_port=htons(57654), sin_addr=inet_addr("10.0.2.15")}, [16]) = 0
+sendto(4, "\26\3\1\0\351\1\0\0\345\3\3]^\215]\6cu1\241?g\0\367\237\206M\357\256\225\215?"..., 238, MSG_NOSIGNAL, NULL, 0) = 238
+recvfrom(4, 0x5600887b73ab, 5, 0, NULL, NULL) = -1 EAGAIN (Resource temporarily unavailable)
+recvfrom(4, "\26\3\3\0N", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\2\0\0J\3\3]^\215@}\3628je]\6\v\207\374=v\26f\\\326\21\227\362\2DO"..., 78, 0, NULL, NULL) = 78
+recvfrom(4, "\26\3\3\10@", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\v\0\10<\0\0109\0\3\3230\202\3\3170\202\2\267\240\3\2\1\2\2\20L\2\205\376d\323\212"..., 2112, 0, NULL, NULL) = 2112
+recvfrom(4, "\26\3\3\0\223", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\f\0\0\217\3\0\27A\0040U\364\225\5\315\330\337G\33\352\201\344\17\252\4Q#\201\30<\26\24"..., 147, 0, NULL, NULL) = 147
+recvfrom(4, "\26\3\3\0\4", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\16\0\0\0", 4, 0, NULL, NULL) = 4
+sendto(4, "\26\3\3\0F\20\0\0BA\4@(\364z\323\255\251U\270\321\177\270c\217y\"8\2760\213Q"..., 75, MSG_NOSIGNAL, NULL, 0) = 75
+sendto(4, "\24\3\3\0\1\1", 6, MSG_NOSIGNAL, NULL, 0) = 6
+sendto(4, "\26\3\3\0(\0\0\0\0\0\0\0\0{\245\366\277'\353\1\265d0Y\255TQ7^\273\25\245"..., 45, MSG_NOSIGNAL, NULL, 0) = 45
+recvfrom(4, 0x560089766563, 5, 0, NULL, NULL) = -1 EAGAIN (Resource temporarily unavailable)
+recvfrom(4, "\26\3\3\0\344", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\4\0\0\340\0\1\211\300\0\332\0\260t\*YO]\26\\SK\337\352gP`\352\r\363\325\210\257"..., 228, 0, NULL, NULL) = 228
+recvfrom(4, "\24\3\3\0\1", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\1", 1, 0, NULL, NULL) = 1
+recvfrom(4, "\26\3\3\0(", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\0\0\0\0\0\0\0\0\177\10(\304\367\\\354S`\251<\275\261\345\*\334\346D\241\32\21\203\275\376"..., 40, 0, NULL, NULL) = 40
+sendto(4, "\27\3\3\0g\0\0\0\0\0\0\0\1\303\7\253\246\0\246\345\r\232$%\334\307\327\207SSN\361"..., 108, MSG_NOSIGNAL, NULL, 0) = 108
+recvfrom(4, "\27\3\3\3\34", 5, 0, NULL, NULL) = 5
+recvfrom(4, "\0\0\0\0\0\0\0\1\372\270\350\0317\234\0274\267\340e\330\r\2\354\26\236\256\371}I\275|C"..., 796, 0, NULL, NULL) = 796
+HTTP/1.1 200 OK
+...
+Vary: Accept-Encoding
+sendto(4, "\25\3\3\0\32\0\0\0\0\0\0\0\2\217\210\22bI\261\366\210i\213k\217\257h\20\305\200\226", 31, MSG_NOSIGNAL, NULL, 0) = 31
+recvfrom(4, 0x560089766563, 5, 0, NULL, NULL) = -1 EAGAIN (Resource temporarily unavailable)
++++ exited with 0 +++
+[kangetsu@ubuntu16 ~ Thu Aug 22 21:40:32]
+```
+
+　色々出てきました。悲しいことに, 正直私はちゃんと読み解く地力が今はないので, ざっくりと流れを追うにとどめます。  
+なお, HTTP レスポンスとして返ってきている HTTP ヘッダは頭と末尾以外省略しています。
+
+### 呼ばれている systemcall の種類
+
+`curl` で HTTP リクエストを投げた時, 次の systemcall が呼ばれています。
+
+- `socket`: socket を作成する[^2]
+- `setsockopt`: socket にオプションを設定
+- `connect`: socket をつないで connection 生成
+- `getsockopt`: socket のオプションの取得
+- `getpeername`: socket に接続している相手のアドレスを取得
+- `getsockname`: socket に接続しているローカルアドレスを取得
+- `sendto`: 接続先 socket にメッセージを送る
+- `recvfrom`: socket からメッセージを受け取る
+
+これら systemcall は Linux に実装されているものなので, `man` コマンドでマニュアルを見ることができます (systemcall は OS の機能でした)[^3]。  
+また, その実体は C 言語のプログラムで, 例えば `man socket` を見ると
+
+```text
+...
+SYNOPSIS
+    #include <sys/types.h> / *See NOTES* /
+    #include <sys/socket.h>
+
+    int socket(int domain, int type, int protocol);
+...
+```
+
+とあり, 例えば私の環境では `/usr/include/x86_64-linux-gnu/sys/types.h` `/usr/include/x86_64-linux-gnu/sys/socket.h` にありました。
+
+`sendto` に関しては, `man send` に "`send` は flag がなければ `write` と等価, `sendto` は `sockaddr`, `socklen_t` がなければ `send` と等価" のように書かれています。
+
+> ...
+> The only difference between send() and write(2) is the presence of flags. With a zero flags argument, send() is equivalent to write(2). Also, the following call
+>
+>   send(sockfd, buf, len, flags);
+>
+> is equivalent to
+> 
+>   sendto(sockfd, buf, len, flags, NULL, 0);
+>
+> ...
+
+『ネットワークはなぜつながるか』では, `write` を例示していましたが, 機能としてはほぼ同じなので `write` を `sendto` に読み替えればよさそうです。  
+同じように, `recvfrom` も `read` と読み替えればよさそうですね。
+
+上から順に実行されているので, 大体
+
+1. socket を作成し
+2. socket にオプションを設定し
+3. socket をつなぎ
+4. メッセージを送り
+5. メッセージを受け取る
+
+という感じのようです。
+
+### socket が主役: ファイルディスクリプタ
+
+　上で示した systemcall の流れを見てみると, おもしろいことに気づきます。  
+それは, `socket` 以後, つまり socket を作成した後に呼ばれている systemcall では全て第一引数に `4` を渡していることです。
+
+これが実は, socket の識別子として説明されていた, **ファイルディスクリプタ** です。  
+`man socket` を見ると,
+
+```text
+...
+SYNOPSIS
+  #include <sys/types.h> / *See NOTES* /
+  #include <sys/socket.h>
+  int socket(int domain, int type, int protocol);
+DESCRIPTION
+  socket() creates an endpoint for communication and returns a descriptor.
+...
+```
+
+とあります。  
+すなわち, `socket` は返り値として, int 型のファイルディスクリプタを返す, と書かれています。  
+systemcall を追うことで, 確かにファイルディスクリプタによって socket を識別して動作している様子が確認できました。  
+socket を通じてデータ送受信をしているので, socket 作成後は毎回このディスクリプタで識別した socket, すなわち通信相手と接続できた socket を使っていますね。
+
+## `netstat` でsocket 利用の様子を見る
+
+　次は, `netstat` コマンドで socket の利用状況を見てみます。  
+一旦 firefox で https://www.google.com にリクエストを送った状態 (Google のページが表示されている状態) にして, `netstat` を叩きます。  
+今回見たいもの以外は不要なので, `grep` で表示するものを絞ってます。
+
+```text
+[kangetsu@ubuntu16 ~ Thu Aug 22 22:49:33]
+$ sudo netstat -ntp | head -n 2; sudo netstat -ntp | grep -v localhost | grep firefox | grep -w tcp
+Active Internet connections (w/o servers)
+Proto Recv-Q Send-Q Local Address Foreign Address State PID/Program name
+tcp 0 0 10.0.2.15:37144 52.34.225.215:443 ESTABLISHED 26312/firefox
+[kangetsu@ubuntu16 ~ Thu Aug 22 22:51:10]
+```
+
+`-n` オプションを付けたので名前解決していません。  
+これで, 今動作中の firefox のプロセスでは, ローカルの 37144 ポートと, 52.34.225.215 (おそらく Google) の 443 ポート (HTTPS) で socket を接続していることが分かります。
+
+......ちなみに, [前回 dig を使って www.google.com の名前解決をしたとき](/2019/08/dns-recursive-resolution-with-dig/)は, こんな IP アドレスではありませんでした。
+
+ちょっと気になったので, また dig を使って, このアドレスを今度は逆引きしてみました[^4]。
+
+```text
+[kangetsu@ubuntu16 ~ Thu Aug 22 22:43:41]
+$ for i in $(netstat -ant | grep ESTABLISHED | grep -w tcp | grep -v "10.0.2.2" | awk '{print $5}' | cut -f 1 -d ':'); do echo $i; dig -x $i | grep "ANSWER SECTION" -A1; done
+52.34.225.215
+;; ANSWER SECTION:
+215.225.34.52.in-addr.arpa. 300 IN PTR ec2-52-34-225-215.us-west-2.compute.amazonaws.com.
+[kangetsu@ubuntu16 ~ Thu Aug 22 22:56:58]
+```
+
+え, www.google.com って AWS の EC2 で動いてるの......？  
+などと混乱しましたが, 色々調べてみると, どうやら CDN のようでした (おそらく)。  
+結構海外のサイトでも, 「なんで自分のマシンが何もしてないのに EC2 と通信してるの？」みたいな質問がありました。  
+みんな同じように悩んでて少し安心。
+
+## おわり
+
+　今回は以上になります。  
+わかる人からは突っ込みどころ満載かもしれません, 何か気づかれた方は後学のためにご教授ください。  
+こんな風に Linux では systemcall を追ったり, 詳細を自分で観察できるので楽しいですね。
+
+まだまだ知識不足ではありますが, こんな感じで少しずつでも手を動かしていきたいです[^5]。
+
+[^1]: ざっくり言うと, アプリケーションが OS の持つ機能を利用する仕組み......でいいはず。第一章で「データ送受信機能はアプリそれぞれで実装するとごちゃごちゃになるので共通基盤である OS の持つ機能を利用する」みたいなことが書いてあったと思いますが, 今回の例だとブラウザというアプリが OS のデータ送受信機能を利用すること, という感じです。次から見ていくように, 一口にデータ送受信機能と言っても様々な機能の集合から成っています
+[^2]: 2回呼ばれてるのは, 1回目が IPv6 で試み, 2回目で IPv4 で成功している, ように見えます。実際, curl で IPv4 を明示的に利用する -4 オプションを付けて実行したときは初回の PF_INET6 を利用する socket systemcall は呼び出されませんでした
+[^3]: C を読める人, 強い人, 頑張りたい人は man で systemcall を追うときっと強くなれます。私は一旦後にします......
+[^4]: 無駄に for 回してますが気にしないでください。ESTABLISHED な connection 全部見てみたかったのでこう書いてました
+[^5]: API, ABI, systemcall について詳しく知りたい方は, 武内覚さんの Qiita のエントリ が詳しそう。私はこれで「なるほど」と思える地力はまだありません, 精進
