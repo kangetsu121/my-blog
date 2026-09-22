@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Bash 起動時の startup file 読み込みフロー</title>
+  <desc id="desc">Bash の起動をログイン、対話型の非ログイン、非対話型の非ログインに分け、読み込むファイルと例外を示す。ログイン時の個人用ファイルは番号順に探し、最初の読み取り可能な一つだけを読む。</desc>
+  <defs>
+    <style>
+      .jp { font-family: "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif; }
+      .mono { font-family: Menlo, Consolas, "Liberation Mono", monospace; }
+      .ink { fill: #17283b; }
+      .muted { fill: #52657b; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 20px; }
+      .card-title { font-size: 25px; font-weight: 700; }
+      .body { font-size: 20px; }
+      .small { font-size: 17px; }
+      .file { font-size: 23px; font-weight: 600; }
+      .note { font-size: 18px; }
+      .line { fill: none; stroke: #8599ad; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#8599ad"/>
+    </marker>
+  </defs>
+
+  <rect width="1440" height="1080" fill="#ffffff"/>
+  <text x="72" y="78" class="jp ink title">Bash の startup file 読み込みフロー</text>
+  <text x="72" y="115" class="jp muted subtitle">起動方法に応じて読むファイルが変わる</text>
+
+  <rect x="610" y="146" width="220" height="62" rx="31" fill="#17324f"/>
+  <text x="720" y="186" text-anchor="middle" class="jp" fill="#ffffff" font-size="23" font-weight="700">Bash を起動</text>
+
+  <path d="M720 208 V244 H272 V275" class="line" marker-end="url(#arrow)"/>
+  <path d="M720 244 V275" class="line" marker-end="url(#arrow)"/>
+  <path d="M720 244 H1168 V275" class="line" marker-end="url(#arrow)"/>
+
+  <rect x="72" y="292" width="400" height="522" rx="18" fill="#f7faff" stroke="#dce7f1" stroke-width="2"/>
+  <rect x="72" y="292" width="400" height="92" rx="18" fill="#eaf2fb"/>
+  <path d="M72 366 H472 V384 H72 Z" fill="#eaf2fb"/>
+  <text x="102" y="335" class="jp ink card-title">ログイン</text>
+  <text x="102" y="366" class="jp muted small">対話型、または非対話型 + --login</text>
+
+  <rect x="100" y="413" width="344" height="65" rx="11" fill="#ffffff" stroke="#c6d7e7" stroke-width="2"/>
+  <text x="272" y="454" text-anchor="middle" class="mono ink file">/etc/profile</text>
+  <path d="M272 478 V511" class="line" marker-end="url(#arrow)"/>
+  <text x="102" y="551" class="jp muted body">優先順に探す</text>
+  <text x="421" y="551" text-anchor="end" class="jp muted small">※1</text>
+  <rect x="100" y="572" width="344" height="176" rx="11" fill="#ffffff" stroke="#c6d7e7" stroke-width="2"/>
+  <text x="125" y="615" class="mono ink file">1  ~/.bash_profile</text>
+  <path d="M124 632 H420" stroke="#e5edf5" stroke-width="1.5"/>
+  <text x="125" y="671" class="mono ink file">2  ~/.bash_login</text>
+  <path d="M124 688 H420" stroke="#e5edf5" stroke-width="1.5"/>
+  <text x="125" y="727" class="mono ink file">3  ~/.profile</text>
+
+  <rect x="520" y="292" width="400" height="522" rx="18" fill="#f8fbfa" stroke="#dceae5" stroke-width="2"/>
+  <rect x="520" y="292" width="400" height="92" rx="18" fill="#eaf6f1"/>
+  <path d="M520 366 H920 V384 H520 Z" fill="#eaf6f1"/>
+  <text x="550" y="335" class="jp ink card-title">対話型・非ログイン</text>
+  <text x="550" y="366" class="jp muted small">通常の端末での対話的な起動</text>
+
+  <rect x="548" y="413" width="344" height="65" rx="11" fill="#ffffff" stroke="#c7dfd5" stroke-width="2"/>
+  <text x="720" y="454" text-anchor="middle" class="mono ink file">/etc/bash.bashrc</text>
+  <text x="872" y="500" text-anchor="end" class="jp muted small">Debian / Ubuntu ※2</text>
+  <path d="M720 507 V542" class="line" marker-end="url(#arrow)"/>
+  <rect x="548" y="559" width="344" height="65" rx="11" fill="#ffffff" stroke="#c7dfd5" stroke-width="2"/>
+  <text x="720" y="600" text-anchor="middle" class="mono ink file">~/.bashrc</text>
+
+  <rect x="968" y="292" width="400" height="522" rx="18" fill="#fcfaf7" stroke="#eee3d5" stroke-width="2"/>
+  <rect x="968" y="292" width="400" height="92" rx="18" fill="#fbf1e3"/>
+  <path d="M968 366 H1368 V384 H968 Z" fill="#fbf1e3"/>
+  <text x="998" y="335" class="jp ink card-title">非対話型・非ログイン</text>
+  <text x="998" y="366" class="jp muted small">スクリプト実行など</text>
+
+  <text x="998" y="435" class="jp ink body" font-weight="700">sshd / rshd 経由と判定 ※3</text>
+  <rect x="996" y="458" width="344" height="65" rx="11" fill="#ffffff" stroke="#e7d8c7" stroke-width="2"/>
+  <text x="1168" y="499" text-anchor="middle" class="mono ink file">~/.bashrc</text>
+  <path d="M996 556 H1340" stroke="#e8ded2" stroke-width="2"/>
+  <text x="998" y="606" class="jp ink body" font-weight="700">通常の非対話型起動</text>
+  <rect x="996" y="630" width="344" height="103" rx="11" fill="#ffffff" stroke="#e7d8c7" stroke-width="2"/>
+  <text x="1168" y="671" text-anchor="middle" class="mono ink file">$BASH_ENV</text>
+  <text x="1168" y="704" text-anchor="middle" class="jp muted small">設定されていれば、そのファイル</text>
+
+  <path d="M72 850 H1368" stroke="#dce5ed" stroke-width="2"/>
+  <text x="72" y="891" class="jp ink" font-size="20" font-weight="700">注記</text>
+  <text x="72" y="931" class="jp muted note">※1  1 → 2 → 3 の順に探し、最初に存在して読み取り可能な 1 ファイルだけを読む。</text>
+  <text x="72" y="965" class="jp muted note">※2  /etc/bash.bashrc は Debian / Ubuntu 側で有効なシステム共通ファイル。</text>
+  <text x="72" y="999" class="jp muted note">※3  Bash がネットワーク接続からの非対話的起動と判定した場合の特殊な規則。</text>
+  <text x="72" y="1042" class="jp muted" font-size="15">対象: Bash として起動した場合。sh としての起動、POSIX mode、特殊な起動オプションは省略。</text>
+</svg>
